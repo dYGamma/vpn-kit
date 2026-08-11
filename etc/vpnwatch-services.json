@@ -1,0 +1,167 @@
+{
+  "_comment": [
+    "Правь этот файл, чтобы добавить свои сервисы.",
+    "patterns — регулярные выражения по адресу назначения.",
+    "flag: true — считать нарушением договорённостей.",
+    "Файл перечитывается на лету, перезапуск не нужен."
+  ],
+  "services": [
+    {
+      "name": "МАКС",
+      "flag": true,
+      "patterns": [
+        "(^|\\.)max\\.ru$",
+        "(^|\\.)oneme\\.ru$",
+        "(^|\\.)max\\.ru:",
+        "maxmessenger",
+        "(^|\\.)mymax\\.ru$"
+      ]
+    },
+    {
+      "name": "Торренты / P2P",
+      "flag": true,
+      "patterns": [
+        "^tracker\\.",
+        "^announce\\.",
+        "opentrackr",
+        "coppersurfer",
+        "leechers-paradise",
+        "demonii",
+        "openbittorrent",
+        "exodus\\.desync",
+        "torrent\\.eu\\.org",
+        "bittorrent",
+        "rutracker",
+        "rutor\\.",
+        "1337x",
+        "thepiratebay",
+        "piratebay",
+        "nnmclub",
+        "kinozal",
+        "nyaa\\.si"
+      ]
+    },
+    {
+      "name": "Steam / игры",
+      "flag": false,
+      "patterns": [
+        "steamcontent\\.com",
+        "steamcdn",
+        "steamstatic",
+        "steampowered",
+        "steamcommunity",
+        "steamserver\\.net",
+        "epicgames",
+        "unrealengine",
+        "battle\\.net",
+        "blizzard",
+        "riotgames",
+        "ubisoft",
+        "\\bea\\.com",
+        "xboxlive",
+        "playstation",
+        "nintendo",
+        "gog\\.com"
+      ]
+    },
+    {
+      "name": "Видео / стриминг",
+      "flag": false,
+      "patterns": [
+        "googlevideo\\.com",
+        "ytimg\\.com",
+        "youtube",
+        "nflxvideo",
+        "netflix",
+        "ttvnw\\.net",
+        "twitch",
+        "vkvideo",
+        "rutube",
+        "okcdn",
+        "mycdn\\.me",
+        "kinopoisk",
+        "ivi\\.ru",
+        "more\\.tv"
+      ]
+    },
+    {
+      "name": "Telegram",
+      "flag": false,
+      "patterns": [
+        "^149\\.154\\.1[6-7]\\d\\.",
+        "^91\\.108\\.",
+        "^95\\.161\\.64\\.",
+        "(^|\\.)t\\.me$",
+        "telegram"
+      ]
+    },
+    {
+      "name": "Соцсети",
+      "flag": false,
+      "patterns": [
+        "instagram",
+        "facebook",
+        "fbcdn",
+        "whatsapp",
+        "(^|\\.)vk\\.com$",
+        "vk-cdn",
+        "userapi\\.com",
+        "twitter",
+        "\\bx\\.com",
+        "tiktok",
+        "discord"
+      ]
+    },
+    {
+      "name": "Обновления ОС",
+      "flag": false,
+      "patterns": [
+        "windowsupdate",
+        "msftconnecttest",
+        "delivery\\.mp\\.microsoft",
+        "swcdn\\.apple\\.com",
+        "swdist\\.apple\\.com",
+        "archive\\.ubuntu",
+        "snapcraft"
+      ]
+    },
+    {
+      "name": "Облака / файлы",
+      "flag": false,
+      "patterns": [
+        "drive\\.google",
+        "dropbox",
+        "mega\\.nz",
+        "yadi\\.sk",
+        "disk\\.yandex",
+        "onedrive",
+        "1drv\\.ms"
+      ]
+    },
+    {
+      "name": "Антивирусы",
+      "flag": false,
+      "patterns": [
+        "kaspersky",
+        "avast",
+        "drweb",
+        "eset",
+        "mcafee"
+      ]
+    },
+    {
+      "name": "DNS-over-TLS",
+      "flag": false,
+      "patterns": [
+        "cloudflare-dns\\.com",
+        "^1\\.1\\.1\\.1$",
+        "^1\\.0\\.0\\.1$",
+        "^8\\.8\\.8\\.8$",
+        "^8\\.8\\.4\\.4$",
+        "dns\\.google",
+        "dns\\.adguard",
+        "^9\\.9\\.9\\.9$"
+      ]
+    }
+  ]
+}

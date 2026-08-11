@@ -1,0 +1,36 @@
+listen: :51712
+
+tls:
+  cert: /root/cert/ip/fullchain.pem
+  key: /root/cert/ip/privkey.pem
+
+# Пользователи не перечисляются здесь: их проверяет служба hysteria-auth,
+# которая смотрит прямо в базу 3x-ui. Завёл клиента в панели - он работает
+# сразу, перезапускать эту службу не нужно.
+auth:
+  type: http
+  http:
+    url: http://YOUR_MASQUERADE_SITE/
+    insecure: false
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://YOUR_MASQUERADE_SITE/
+    rewriteHost: true
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+
+ignoreClientBandwidth: false
+
+# Обфускация Salamander: поверх QUIC накидывается шифрующая обёртка, и
+# отпечаток QUIC пропадает. Цена — узел больше не притворяется сервером
+# HTTP/3, поэтому основной вход на 36712 оставляем как есть, без обфускации.
+obfs:
+  type: salamander
+  salamander:
+    password: YOUR_OBFS_PASSWORD

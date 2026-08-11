@@ -1,0 +1,10 @@
+# Ничего с ключами и адресами в репозиторий не попадает
+*.key
+*.pem
+keys.json
+obfs-password
+/etc/vpn-issue/config
+config.json
+!etc/xray-ss.config.example.json
+*.db
+*.log

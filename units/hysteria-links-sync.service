@@ -1,0 +1,7 @@
+[Unit]
+Description=Ссылки Hysteria2 в подписках 3x-ui
+After=x-ui.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hysteria-links-sync.py

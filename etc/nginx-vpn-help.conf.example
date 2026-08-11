@@ -1,0 +1,56 @@
+server {
+    listen 2053 ssl http2;
+    listen [::]:2053 ssl http2;
+    server_name _;
+
+    ssl_certificate     /root/cert/ip/fullchain.pem;
+    ssl_certificate_key /root/cert/ip/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    root /var/www/vpn-help;
+    charset utf-8;
+    server_tokens off;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    location = /PAGE_PATH  { return 301 https://$host:2053/PAGE_PATH/; }
+    location = /PAGE_PATH/ { try_files /PAGE_PATH/index.html =404; }
+
+    # Данные для шапки страницы. Секрета нет и быть не может - его заменяет
+    # сам код подписки, без него ничего не отдаётся.
+    # Переходник на свежие файлы приложений: GET, без секрета — за ним всё
+    # равно публичные адреса GitHub.
+    location ^~ /PAGE_PATH/dl/ {
+        proxy_pass http://127.0.0.1:8791/dl/;
+        proxy_set_header Host \$host;
+    }
+
+    location = /PAGE_PATH/info {
+        proxy_pass http://127.0.0.1:8791/info$is_args$args;
+        proxy_set_header Host $host;
+    }
+
+    # API для бота: путь неугадываемый, плюс сервис требует заголовок X-Auth.
+    location ^~ /API_PATH/ {
+        proxy_pass http://127.0.0.1:8791/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Auth $http_x_auth;
+        client_max_body_size 16k;
+    }
+
+        # Подписки под конкретное приложение (генератор в vpn-issue).
+    location ^~ /PAGE_PATH/s/ {
+        proxy_pass http://127.0.0.1:8791/s/;
+        proxy_set_header User-Agent $http_user_agent;
+        proxy_read_timeout 30s;
+    }
+
+    # Зеркало баз правил: клиенты тянут их отсюда, а не с GitHub.
+    location ^~ /rules/ {
+        alias /var/www/vpn-help/rules/;
+        add_header Cache-Control "public, max-age=86400";
+        types { application/octet-stream srs mrs; }
+        default_type application/octet-stream;
+    }
+
+    location / { return 444; }
+}

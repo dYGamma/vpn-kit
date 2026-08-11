@@ -1,0 +1,9 @@
+[Unit]
+Description=Еженедельное обновление списка российских сетей
+
+[Timer]
+OnCalendar=Mon 04:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

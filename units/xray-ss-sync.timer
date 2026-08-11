@@ -1,0 +1,9 @@
+[Unit]
+Description=Подхватывать новых клиентов в резервный вход
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target

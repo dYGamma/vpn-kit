@@ -1,0 +1,14 @@
+[Unit]
+Description=Резервный вход Shadowsocks-2022 (отдельно от панели)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/x-ui/bin/xray-linux-amd64 run -c /etc/xray-ss/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

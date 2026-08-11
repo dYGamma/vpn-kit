@@ -1,0 +1,6 @@
+[Unit]
+Description=Синхронизация клиентов резервного входа Shadowsocks
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/local/sbin/xray-ss-sync.py && systemctl reload-or-restart xray-ss'

@@ -1,0 +1,8 @@
+[Unit]
+Description=Обновление зеркала баз правил для подписок
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rules-mirror.sh

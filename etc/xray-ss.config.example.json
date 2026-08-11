@@ -1,0 +1,62 @@
+{
+ "log": {
+  "loglevel": "warning"
+ },
+ "inbounds": [
+  {
+   "tag": "ss-in",
+   "port": 51643,
+   "protocol": "shadowsocks",
+   "settings": {
+    "method": "2022-blake3-aes-256-gcm",
+    "password": "SERVER_PSK_BASE64_32B",
+    "network": "tcp,udp",
+    "clients": [
+     {
+      "password": "USER_PSK_BASE64_32B",
+      "email": "user1"
+     }
+    ]
+   },
+   "sniffing": {
+    "enabled": true,
+    "destOverride": [
+     "http",
+     "tls",
+     "quic"
+    ]
+   }
+  }
+ ],
+ "outbounds": [
+  {
+   "tag": "direct",
+   "protocol": "freedom",
+   "settings": {
+    "domainStrategy": "UseIP"
+   }
+  },
+  {
+   "tag": "block",
+   "protocol": "blackhole"
+  }
+ ],
+ "routing": {
+  "rules": [
+   {
+    "type": "field",
+    "ip": [
+     "geoip:private"
+    ],
+    "outboundTag": "block"
+   },
+   {
+    "type": "field",
+    "protocol": [
+     "bittorrent"
+    ],
+    "outboundTag": "block"
+   }
+  ]
+ }
+}

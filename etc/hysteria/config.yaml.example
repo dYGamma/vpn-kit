@@ -1,0 +1,28 @@
+listen: :36712
+
+tls:
+  cert: /root/cert/ip/fullchain.pem
+  key: /root/cert/ip/privkey.pem
+
+# Пользователи не перечисляются здесь: их проверяет служба hysteria-auth,
+# которая смотрит прямо в базу 3x-ui. Завёл клиента в панели - он работает
+# сразу, перезапускать эту службу не нужно.
+auth:
+  type: http
+  http:
+    url: http://YOUR_MASQUERADE_SITE/
+    insecure: false
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://YOUR_MASQUERADE_SITE/
+    rewriteHost: true
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+
+ignoreClientBandwidth: false

@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""vpnctl — панель управления VPN-узлом.
+
+Собирает в одном месте то, что раньше приходилось выяснять десятком команд:
+живы ли службы и входы, кто из людей чем пользуется, забрал ли клиент правила
+обхода, что российское утекло через тоннель, есть ли заявки на доступ.
+
+Только стандартная библиотека: на боевом узле лишние зависимости — это лишний
+способ его сломать. Данные берутся у systemd, ss, базы панели 3x-ui, журналов
+nginx и Xray, отчёта сторожа утечек и журнала vpnwatch.
+
+Клавиши: 1-5 разделы, r обновить, l пересчитать утечки, s синхронизировать
+клиентов резервных входов, q выход.
+"""
+
+import curses
+import json
+import os
+import re
+import socket
+import sqlite3
+import subprocess
+import time
+from collections import defaultdict
+
+XUI_DB = "/etc/x-ui/x-ui.db"
+ACCESS_LOG = "/var/log/x-ui/access.log"
+NGINX_LOGS = "/var/log/nginx"
+LEAKS = "/var/lib/vpn-issue/leaks.json"
+REQUESTS = "/var/lib/vpn-issue/requests.json"
+VIOLATIONS = "/var/log/vpnwatch/violations.log"
+SS_KEYS = "/etc/xray-ss/keys.json"
+
+SERVICES = [
+    ("x-ui", "панель и Xray"),
+    ("xray-ss", "вход Shadowsocks"),
+    ("hysteria-server", "вход Hysteria2"),
+    ("hysteria-obfs", "Hysteria2 с обфускацией"),
+    ("hysteria-auth", "проверка паролей Hysteria"),
+    ("vpn-issue", "выдача подписок"),
+    ("nginx", "страница и подписки"),
+    ("vpnwatch", "сторож нарушений"),
+]
+TIMERS = [
+    ("leak-scan.timer", "поиск утечек"),
+    ("rules-mirror.timer", "обновление баз правил"),
+    ("xray-ss-sync.timer", "ключи Shadowsocks"),
+    ("hysteria-links-sync.timer", "ссылки Hysteria"),
+    ("ru-allowlist.timer", "список российских сетей"),
+]
+TABS = ["Обзор", "Люди", "Входы", "Утечки", "Заявки"]
+
+
+def sh(*args, timeout=10):
+    try:
+        return subprocess.run(args, capture_output=True, text=True,
+                              timeout=timeout).stdout.strip()
+    except Exception:
+        return ""
+
+
+def weight(b):
+    b = float(b or 0)
+    for u in ("Б", "КБ", "МБ", "ГБ", "ТБ"):
+        if b < 1024 or u == "ТБ":
+            return "%.0f %s" % (b, u) if b >= 10 or u == "Б" else "%.1f %s" % (b, u)
+        b /= 1024
+
+
+def ago(ts):
+    """Человеческое «сколько прошло» из метки времени в секундах."""
+    if not ts:
+        return "никогда"
+    d = int(time.time() - ts)
+    if d < 0:
+        return "только что"
+    for lim, div, name in ((60, 1, "с"), (3600, 60, "мин"), (86400, 3600, "ч")):
+        if d < lim:
+            return "%d %s назад" % (d // div, name)
+    return "%d дн назад" % (d // 86400)
+
+
+# --- сбор данных -----------------------------------------------------------
+
+def db_rows(sql, args=()):
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % XUI_DB, uri=True, timeout=5)
+        rows = con.execute(sql, args).fetchall()
+        con.close()
+        return rows
+    except Exception:
+        return []
+
+
+def collect_services():
+    out = []
+    for name, what in SERVICES:
+        state = sh("systemctl", "is-active", name) or "нет"
+        out.append((name, what, state))
+    return out
+
+
+def collect_timers():
+    out = []
+    for name, what in TIMERS:
+        state = sh("systemctl", "is-active", name) or "нет"
+        nxt = sh("systemctl", "show", name, "-p", "NextElapseUSecRealtime", "--value")
+        out.append((name, what, state, nxt[:16] if nxt and nxt != "0" else ""))
+    return out
+
+
+def collect_ports():
+    """Какие входы реально слушают. Порты берём из конфигов, а не из головы."""
+    listening = sh("ss", "-lntu")
+    want = []
+    try:
+        cfg = json.load(open("/usr/local/x-ui/bin/config.json"))
+        for i in cfg.get("inbounds", []):
+            if i.get("tag") == "api":
+                continue
+            want.append((i.get("port"), "tcp", i.get("protocol", "?"), i.get("tag", "")))
+    except Exception:
+        pass
+    for path, proto, name in (("/etc/hysteria/config.yaml", "udp", "hysteria2"),
+                              ("/etc/hysteria/config-obfs.yaml", "udp", "hysteria2+obfs")):
+        try:
+            m = re.search(r"^listen:\s*:(\d+)", open(path).read(), re.M)
+            if m:
+                want.append((int(m.group(1)), proto, name, os.path.basename(path)))
+        except Exception:
+            pass
+    try:
+        c = json.load(open("/etc/xray-ss/config.json"))
+        i = c["inbounds"][0]
+        want.append((i["port"], "tcp", "shadowsocks", i.get("tag", "")))
+    except Exception:
+        pass
+    out = []
+    for port, proto, what, tag in want:
+        alive = re.search(r"[:.]%d\b" % port, listening) is not None
+        out.append((port, proto, what, tag, alive))
+    return sorted(out)
+
+
+def collect_clients():
+    rows = db_rows("select id, email, sub_id, tg_id from clients order by email")
+    traf = {}
+    for email, up, down in db_rows(
+            "select email, coalesce(sum(up),0), coalesce(sum(down),0)"
+            " from client_traffics group by email"):
+        traf[email] = (up, down)
+    fetched = last_fetch()
+    out = []
+    for cid, email, sub_id, tg in rows:
+        up, down = traf.get(email, (0, 0))
+        out.append({"id": cid, "email": email, "sub": sub_id or "", "tg": tg or 0,
+                    "traffic": up + down, "fetched": fetched.get(sub_id or "", 0)})
+    return sorted(out, key=lambda r: -r["traffic"])
+
+
+def last_fetch():
+    """Когда каждый код подписки последний раз забирали НЕ через curl.
+
+    Это единственный способ узнать, доехали ли до человека новые правила: если
+    приложение подписку не тянуло, у него старые настройки, чем бы мы их ни
+    правили на сервере.
+    """
+    res = {}
+    mon = {m: i for i, m in enumerate(
+        "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(), 1)}
+    try:
+        names = [f for f in os.listdir(NGINX_LOGS) if "access" in f and f.endswith(".log")]
+    except OSError:
+        return res
+    for name in names:
+        try:
+            for line in open(os.path.join(NGINX_LOGS, name), errors="replace"):
+                if "/s/" not in line or "curl/" in line:
+                    continue
+                m = re.search(r'\[(\d+)/(\w+)/(\d+):(\d+):(\d+):(\d+)', line)
+                s = re.search(r'/s/([A-Za-z0-9_-]{6,64})', line)
+                if not (m and s):
+                    continue
+                try:
+                    ts = time.mktime((int(m.group(3)), mon.get(m.group(2), 1),
+                                      int(m.group(1)), int(m.group(4)),
+                                      int(m.group(5)), int(m.group(6)), 0, 0, -1))
+                except Exception:
+                    continue
+                if ts > res.get(s.group(1), 0):
+                    res[s.group(1)] = ts
+        except OSError:
+            pass
+    return res
+
+
+def collect_sessions():
+    out = sh("ss", "-tn", "state", "established")
+    n = max(0, len([l for l in out.splitlines() if ":443" in l or ":8443" in l]))
+    return n
+
+
+def collect_traffic_today():
+    """Кто сколько прогнал за сегодня — по журналу Xray, а не по счётчикам панели."""
+    per = defaultdict(int)
+    ru = defaultdict(int)
+    try:
+        for line in open(ACCESS_LOG, errors="replace"):
+            m = re.search(r"accepted\s+\w+:([^\s:]+):\d+\s+\[([^\]]+)\]"
+                          r"(?:\s+email:\s*(\S+))?", line)
+            if not m or m.group(2).startswith("api"):
+                continue
+            who = m.group(3) or "?"
+            per[who] += 1
+            if m.group(1).lower().endswith((".ru", ".su", ".xn--p1ai")):
+                ru[who] += 1
+    except OSError:
+        pass
+    return per, ru
+
+
+def collect_leaks():
+    try:
+        return json.load(open(LEAKS))
+    except Exception:
+        return {}
+
+
+def collect_requests():
+    try:
+        d = json.load(open(REQUESTS))
+    except Exception:
+        return []
+    out = []
+    for r in d.get("requests", []) if isinstance(d, dict) else []:
+        if r.get("status") == "pending":
+            out.append(r)
+    return out
+
+
+def collect_violations(limit=14):
+    try:
+        lines = open(VIOLATIONS, errors="replace").read().strip().splitlines()
+    except OSError:
+        return []
+    out = []
+    for l in lines[-limit:]:
+        p = l.split("\t")
+        if len(p) >= 4:
+            out.append((p[0], p[1], p[2], p[3], p[5] if len(p) > 5 else ""))
+    return list(reversed(out))
+
+
+def collect_xray_uptime():
+    """Сколько живёт ГЛАВНЫЙ Xray (тот, что под панелью).
+
+    Резервный вход Shadowsocks — это отдельный процесс того же бинаря, поэтому
+    его надо явно исключить, иначе аптайм покажется от чужой службы.
+    """
+    out = sh("ps", "-eo", "etimes,args", "--no-headers")
+    for l in out.splitlines():
+        if "xray-linux-amd64" not in l or "xray-ss" in l:
+            continue
+        try:
+            s = int(l.split()[0])
+            return "%d ч %d мин" % (s // 3600, (s % 3600) // 60)
+        except Exception:
+            pass
+    return "не запущен"
+
+
+# --- отрисовка -------------------------------------------------------------
+
+class UI:
+    def __init__(self, scr):
+        self.scr = scr
+        self.tab = 0
+        self.msg = ""
+        self.data = {}
+        curses.curs_set(0)
+        scr.nodelay(True)
+        # -1 как «цвет фона терминала» работает только после use_default_colors();
+        # без него init_pair падает с ERR и панель не открывается вовсе.
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+            bg = -1
+        except curses.error:
+            bg = curses.COLOR_BLACK
+        pairs = [(curses.COLOR_GREEN, bg), (curses.COLOR_RED, bg),
+                 (curses.COLOR_YELLOW, bg), (curses.COLOR_CYAN, bg),
+                 (curses.COLOR_WHITE, curses.COLOR_BLUE)]
+        ok = True
+        for i, (fg, b) in enumerate(pairs, start=1):
+            try:
+                curses.init_pair(i, fg, b)
+            except curses.error:
+                ok = False
+        if ok:
+            self.OK, self.BAD, self.WARN, self.ACC, self.BAR = (
+                curses.color_pair(1), curses.color_pair(2), curses.color_pair(3),
+                curses.color_pair(4), curses.color_pair(5))
+        else:
+            # терминал без цветов — обходимся начертанием, панель всё равно работает
+            self.OK = curses.A_NORMAL
+            self.BAD = curses.A_BOLD | curses.A_REVERSE
+            self.WARN = curses.A_BOLD
+            self.ACC = curses.A_BOLD
+            self.BAR = curses.A_REVERSE
+
+    def refresh_data(self):
+        self.data = {
+            "services": collect_services(),
+            "timers": collect_timers(),
+            "ports": collect_ports(),
+            "clients": collect_clients(),
+            "sessions": collect_sessions(),
+            "leaks": collect_leaks(),
+            "requests": collect_requests(),
+            "violations": collect_violations(),
+            "uptime": collect_xray_uptime(),
+            "at": time.time(),
+        }
+        self.data["per"], self.data["ru"] = collect_traffic_today()
+
+    def put(self, y, x, text, attr=0):
+        h, w = self.scr.getmaxyx()
+        if 0 <= y < h and x < w:
+            try:
+                self.scr.addstr(y, x, str(text)[:max(0, w - x - 1)], attr)
+            except curses.error:
+                pass
+
+    def header(self):
+        h, w = self.scr.getmaxyx()
+        d = self.data
+        title = " vpnctl — узел %s " % socket.gethostname()
+        self.put(0, 0, title.ljust(w - 1), self.BAR | curses.A_BOLD)
+        line = "  ".join(
+            ("[%d] %s" % (i + 1, t)) for i, t in enumerate(TABS))
+        self.put(1, 1, line)
+        cur = TABS[self.tab]
+        off = line.find(cur)
+        if off >= 0:
+            self.put(1, 1 + off, cur, self.ACC | curses.A_BOLD | curses.A_UNDERLINE)
+        info = "Xray: %s   сессий: %d   обновлено %s" % (
+            d.get("uptime", "?"), d.get("sessions", 0),
+            time.strftime("%H:%M:%S", time.localtime(d.get("at", 0))))
+        self.put(2, 1, info, curses.A_DIM)
+        self.put(3, 0, "─" * (w - 1), curses.A_DIM)
+
+    def footer(self):
+        h, w = self.scr.getmaxyx()
+        keys = " 1-5 разделы   r обновить   l пересчитать утечки   s ключи резервных входов   q выход "
+        self.put(h - 1, 0, keys.ljust(w - 1), self.BAR)
+        if self.msg:
+            self.put(h - 2, 1, self.msg[:w - 2], self.WARN | curses.A_BOLD)
+
+    def tab_overview(self, y):
+        d = self.data
+        self.put(y, 2, "СЛУЖБЫ", curses.A_BOLD); y += 1
+        for name, what, state in d["services"]:
+            attr = self.OK if state == "active" else self.BAD
+            self.put(y, 4, "%-18s" % name)
+            self.put(y, 22, "%-9s" % state, attr)
+            self.put(y, 33, what, curses.A_DIM)
+            y += 1
+        y += 1
+        self.put(y, 2, "ЗАДАНИЯ ПО РАСПИСАНИЮ", curses.A_BOLD); y += 1
+        for name, what, state, nxt in d["timers"]:
+            attr = self.OK if state == "active" else self.BAD
+            self.put(y, 4, "%-26s" % name)
+            self.put(y, 30, "%-9s" % state, attr)
+            self.put(y, 41, what, curses.A_DIM)
+            y += 1
+        y += 1
+        lk = d["leaks"]
+        broken = len(lk.get("broken_rules", []))
+        newru = len(lk.get("new_ru_domain", []))
+        self.put(y, 2, "СВОДКА", curses.A_BOLD); y += 1
+        self.put(y, 4, "людей с доступом: %d" % len(d["clients"])); y += 1
+        self.put(y, 4, "заявок ждут ответа: %d" % len(d["requests"]),
+                 self.WARN if d["requests"] else 0); y += 1
+        self.put(y, 4, "утечки: правила не работают у %d доменов, новых российских %d"
+                 % (broken, newru), self.BAD if broken else self.OK)
+        return y
+
+    def tab_people(self, y):
+        d = self.data
+        self.put(y, 2, "%-14s %10s %12s %-18s %s"
+                 % ("кто", "трафик", "сегодня", "подписку брал", "российское сегодня"),
+                 curses.A_BOLD | curses.A_UNDERLINE)
+        y += 1
+        for c in d["clients"]:
+            ru = d["ru"].get(c["email"], 0)
+            self.put(y, 2, "%-14s %10s %12d %-18s"
+                     % (c["email"][:14], weight(c["traffic"]),
+                        d["per"].get(c["email"], 0), ago(c["fetched"])))
+            self.put(y, 62, "%d" % ru, self.BAD if ru else self.OK)
+            if not c["tg"]:
+                self.put(y, 70, "нет Telegram", curses.A_DIM)
+            y += 1
+        y += 1
+        self.put(y, 2, "«подписку брал» — когда приложение последний раз забирало правила.",
+                 curses.A_DIM); y += 1
+        self.put(y, 2, "Давно = у человека старые правила, что бы мы ни правили на сервере.",
+                 curses.A_DIM)
+        return y
+
+    def tab_ports(self, y):
+        self.put(y, 2, "%-8s %-6s %-16s %-16s %s"
+                 % ("порт", "proto", "протокол", "метка", "состояние"),
+                 curses.A_BOLD | curses.A_UNDERLINE)
+        y += 1
+        for port, proto, what, tag, alive in self.data["ports"]:
+            self.put(y, 2, "%-8s %-6s %-16s %-16s" % (port, proto, what, tag[:16]))
+            self.put(y, 50, "слушает" if alive else "НЕ СЛУШАЕТ",
+                     self.OK if alive else self.BAD)
+            y += 1
+        y += 1
+        try:
+            n = len(json.load(open(SS_KEYS)).get("users", {}))
+            self.put(y, 2, "ключей Shadowsocks выдано: %d" % n, curses.A_DIM); y += 1
+        except Exception:
+            pass
+        hop = sh("iptables", "-t", "nat", "-S", "PREROUTING")
+        m = re.search(r"--dport (\d+:\d+) -j REDIRECT --to-ports (\d+)", hop)
+        if m:
+            self.put(y, 2, "прыжки по портам: UDP %s -> %s" % (m.group(1), m.group(2)),
+                     curses.A_DIM)
+            y += 1
+            self.put(y, 2, "новые входы ставить ВЫШЕ этого диапазона, иначе их UDP "
+                           "перехватывается", curses.A_DIM)
+        return y
+
+    def tab_leaks(self, y):
+        lk = self.data["leaks"]
+        if not lk:
+            self.put(y, 2, "отчёта нет — нажми l, чтобы пересчитать", self.WARN)
+            return y
+        groups = [("broken_rules", "УЖЕ В СПИСКЕ ОБХОДА, но шло через тоннель "
+                                   "(у клиента не работают правила)", self.BAD),
+                  ("new_ru_domain", "российский домен, которого нет в списке", self.WARN),
+                  ("check_by_hand", "похоже на российский сервис на чужом домене", self.WARN)]
+        for key, title, attr in groups:
+            rows = lk.get(key, [])
+            if not rows:
+                continue
+            self.put(y, 2, "%s (%d)" % (title, len(rows)), attr | curses.A_BOLD); y += 1
+            for r in rows[:8]:
+                self.put(y, 4, "%-30s %6d раз  %s"
+                         % (r["dst"][:30], r.get("hits", 0), ",".join(r.get("users", []))))
+                y += 1
+            if len(rows) > 8:
+                self.put(y, 4, "… ещё %d" % (len(rows) - 8), curses.A_DIM); y += 1
+            y += 1
+        return y
+
+    def tab_requests(self, y):
+        d = self.data
+        rq = d["requests"]
+        self.put(y, 2, "ЗАЯВКИ НА ДОСТУП", curses.A_BOLD); y += 1
+        if not rq:
+            self.put(y, 4, "нет", curses.A_DIM); y += 1
+        for r in rq:
+            self.put(y, 4, "№%s  @%s  (%s)  «%s»"
+                     % (r.get("req_id"), r.get("username") or "?", r.get("tg_id"),
+                        (r.get("text") or "")[:40]), self.WARN)
+            y += 1
+        y += 1
+        self.put(y, 2, "Выдать: /vpn ok <номер>   Отказать: /vpn no <номер>   "
+                       "Отозвать: /vpn off <tg_id>", curses.A_DIM); y += 2
+        self.put(y, 2, "ПОСЛЕДНИЕ НАРУШЕНИЯ (vpnwatch)", curses.A_BOLD); y += 1
+        for when, who, svc, dst, host in d["violations"]:
+            self.put(y, 4, "%-19s %-12s %-22s %s"
+                     % (when[:19], who[:12], svc[:22], (host or dst)[:28]))
+            y += 1
+        return y
+
+    def draw(self):
+        self.scr.erase()
+        if not self.data:
+            self.put(2, 2, "собираю данные…", curses.A_BOLD)
+            self.scr.refresh()
+            return
+        self.header()
+        y = 5
+        try:
+            [self.tab_overview, self.tab_people, self.tab_ports,
+             self.tab_leaks, self.tab_requests][self.tab](y)
+        except Exception as e:
+            # Панель — инструмент наблюдения: она обязана показать хоть что-то,
+            # даже если один источник данных сломался. Падать ей нельзя.
+            self.put(y, 2, "раздел не отрисовался: %s" % e, self.BAD)
+        self.footer()
+        self.scr.refresh()
+
+    def loop(self):
+        # Данные собираем ДО первой отрисовки: иначе разделы обращаются к пустому
+        # словарю и панель падает с KeyError, не успев ничего показать.
+        self.draw()
+        self.refresh_data()
+        last = time.time()
+        while True:
+            self.msg = ""
+            self.draw()
+            time.sleep(0.2)
+            try:
+                ch = self.scr.getch()
+            except Exception:
+                ch = -1
+            if ch in (ord("q"), 27):
+                return
+            if ch in (ord("1"), ord("2"), ord("3"), ord("4"), ord("5")):
+                self.tab = ch - ord("1")
+            elif ch == ord("r"):
+                self.msg = "обновляю…"; self.draw(); self.refresh_data(); last = time.time()
+            elif ch == ord("l"):
+                self.msg = "пересчитываю утечки…"; self.draw()
+                sh("/usr/local/sbin/leak-scan.py", timeout=120)
+                self.refresh_data(); last = time.time()
+            elif ch == ord("s"):
+                self.msg = "синхронизирую ключи резервных входов…"; self.draw()
+                sh("systemctl", "start", "xray-ss-sync.service", timeout=60)
+                sh("systemctl", "start", "hysteria-links-sync.service", timeout=60)
+                self.refresh_data(); last = time.time()
+            if time.time() - last > 20:
+                self.refresh_data(); last = time.time()
+
+
+def main():
+    if os.geteuid() != 0:
+        raise SystemExit("нужны права root: sudo vpnctl")
+    curses.wrapper(lambda scr: UI(scr).loop())
+
+
+if __name__ == "__main__":
+    main()

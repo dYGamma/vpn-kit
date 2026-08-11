@@ -1,0 +1,6 @@
+[Unit]
+Description=Поиск российских сервисов, утёкших через тоннель
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/leak-scan.py

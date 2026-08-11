@@ -1,0 +1,6 @@
+# Секрет для запросов от бота: openssl rand -hex 24
+SECRET=YOUR_SECRET
+# Базовый адрес страницы выдачи, без якоря
+PAGE_BASE=https://SERVER_IP:2053/PAGE_PATH/
+# Секретный путь, по которому nginx проксирует API сервиса наружу
+API_PATH=API_PATH

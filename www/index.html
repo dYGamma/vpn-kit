@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#000000">
+<title>Амстердамский экспресс</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Rubik:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#000000;
+    --ticket:#121214;
+    --ticket-2:#191a1d;
+    --edge:rgba(255,255,255,.07);
+    --teal:#54b3cf;
+    --teal-soft:#8ad4e6;
+    --ink:#ededed;
+    --ink-dim:#9b9b9b;
+    --ink-faint:#6a6a6a;
+    --alarm:#f0656a;
+    --r:16px;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; padding:0 14px 64px;
+    background:var(--void); color:var(--ink);
+    font:400 16px/1.55 Rubik,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  .sheet{max-width:560px;margin:0 auto}
+
+  /* узкий Oswald в разрядку — вокзальное табло */
+  .sign,.label,.plat,.step-head h3,.board > h2,.mark,.stamp,.more > summary{
+    font-family:Oswald,"Arial Narrow",sans-serif;
+    text-transform:uppercase; letter-spacing:.16em;
+  }
+
+  /* ─── шапка сайта ─── */
+  .top{
+    max-width:560px;margin:0 auto;padding:16px 2px 18px;
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+  }
+  .logo{display:flex;align-items:center;gap:9px;font-size:12.5px;font-weight:500;color:var(--ink)}
+  .logo i{
+    display:block;width:3px;height:16px;border-radius:2px;flex:none;
+    background:linear-gradient(var(--teal-soft),var(--teal));
+  }
+  .versa{
+    display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--teal);
+    text-decoration:none;white-space:nowrap;
+  }
+  .versa:hover{color:var(--teal-soft)}
+  .versa svg{width:14px;height:14px;flex:none}
+
+  /* ─── билет ─── */
+  .ticket{
+    background:var(--ticket); border:1px solid var(--edge);
+    border-radius:var(--r);
+    animation:board .5s cubic-bezier(.2,.9,.3,1) both;
+  }
+  @keyframes board{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  .stub{padding:20px}
+  .who-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .label{font-weight:400;font-size:10.5px;color:var(--ink-faint);margin:0 0 3px;letter-spacing:.18em}
+  .value{font-size:17px;font-weight:500;margin:0;line-height:1.3}
+  .who .value{font-size:30px;font-weight:600;letter-spacing:-.01em;word-break:break-all}
+
+  /* штамп контролёра вместо цветной точки */
+  .stamp{
+    flex:none;margin-top:2px;padding:6px 9px 5px;
+    border:1.5px solid var(--teal);color:var(--teal);border-radius:3px;
+    font-size:9.5px;font-weight:500;letter-spacing:.12em;line-height:1.15;
+    text-align:center;transform:rotate(-3deg);max-width:104px;
+  }
+  .stamp.void{border-color:var(--alarm);color:var(--alarm)}
+  .stamp.wait{border-color:var(--ink-faint);color:var(--ink-faint)}
+
+  .facts{display:flex;gap:26px;margin-top:22px;flex-wrap:wrap}
+  .facts > div{min-width:92px}
+
+  /* ─── линия отрыва ─── */
+  .tear{position:relative;height:24px}
+  .tear::before,.tear::after{
+    content:"";position:absolute;top:50%;width:22px;height:22px;
+    margin-top:-11px;border-radius:50%;background:var(--void);
+    border:1px solid var(--edge);
+  }
+  .tear::before{left:-12px}
+  .tear::after{right:-12px}
+  .tear span{
+    position:absolute;top:50%;left:14px;right:14px;height:1px;
+    background:repeating-linear-gradient(90deg,var(--edge) 0 5px,transparent 5px 11px);
+  }
+
+  /* ─── посадка ─── */
+  .board{padding:6px 20px 22px}
+  .board > h2{font-weight:500;font-size:11.5px;color:var(--ink-dim);margin:0 0 14px;letter-spacing:.18em}
+
+  .platforms{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px}
+  .plat{
+    letter-spacing:.1em;font-size:11.5px;font-weight:400;
+    padding:8px 12px;border-radius:8px;cursor:pointer;
+    background:transparent;border:1px solid var(--edge);color:var(--ink-faint);
+  }
+  .plat[aria-selected="true"]{border-color:var(--teal);color:var(--teal);background:rgba(84,179,207,.09)}
+  .plat:focus-visible{outline:2px solid var(--teal-soft);outline-offset:2px}
+  .said{font-size:13px;color:var(--ink-faint);margin:0 0 18px}
+
+  .step{margin-top:20px}
+  .step + .step{margin-top:28px}
+  .step-head{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+  .step-no{
+    flex:none;width:21px;height:21px;border-radius:5px;
+    border:1px solid var(--teal);color:var(--teal);
+    font-family:Oswald,"Arial Narrow",sans-serif;font-size:12px;
+    display:grid;place-items:center;line-height:1;
+  }
+  .step-head h3{margin:0;font-weight:500;font-size:11.5px;color:var(--ink);letter-spacing:.15em}
+  .step > p{margin:0 0 11px;font-size:13.5px;color:var(--ink-dim)}
+  .step > p b{color:var(--ink);font-weight:500}
+
+  .go{
+    display:block;width:100%;text-align:center;text-decoration:none;cursor:pointer;
+    font:600 15.5px/1.3 Rubik,sans-serif;padding:15px;border-radius:10px;
+    border:1px solid transparent;background:var(--teal);color:#04161c;
+  }
+  .go.ghost{background:transparent;border-color:var(--teal);color:var(--teal)}
+  .go.small{
+    background:transparent;border-color:var(--edge);color:var(--ink);
+    font-weight:500;font-size:13.5px;padding:10px 12px;
+  }
+  .go.quiet{
+    background:none;border:0;color:var(--ink-dim);font-weight:400;font-size:13px;
+    padding:9px 0 0;text-decoration:underline;text-decoration-color:var(--ink-faint);
+    text-underline-offset:3px;width:auto;margin:0 auto;display:block;
+  }
+  .go:active{transform:translateY(1px)}
+  .go:focus-visible{outline:2px solid var(--teal-soft);outline-offset:2px}
+  .alt{margin-top:8px;text-align:center}
+  .alt a{color:var(--ink-dim);font-size:12.5px;text-decoration:underline;text-decoration-color:var(--ink-faint);text-underline-offset:3px}
+  .alt a:hover{color:var(--ink)}
+
+  /* ─── прочие приложения ─── */
+  .more{margin-top:22px;border-top:1px solid var(--edge);padding-top:14px}
+  .more > summary{font-size:11px;color:var(--ink-faint);letter-spacing:.15em;font-weight:400}
+  .more[open] > summary{margin-bottom:14px;color:var(--ink-dim)}
+  .car{background:var(--ticket-2);border:1px solid var(--edge);border-radius:12px;padding:13px 14px;margin-bottom:8px}
+  .car-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+  .car-name{font-size:15px;font-weight:600}
+  .mark{
+    font-size:9.5px;padding:3px 7px;border-radius:20px;letter-spacing:.1em;
+    border:1px solid var(--edge);color:var(--ink-faint);
+  }
+  .mark.warn{border-color:var(--alarm);color:var(--alarm)}
+  .car p{font-size:13px;color:var(--ink-dim);margin:0 0 12px}
+  .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .acts .go{flex:1 1 130px;width:auto}
+  .hand{font-size:12px;color:var(--ink-faint);margin:9px 0 0}
+
+  .said-copy{font-size:12.5px;color:var(--teal);text-align:center;height:16px;margin:2px 0 0}
+  .raw{
+    display:block;background:var(--void);border:1px solid var(--edge);border-radius:9px;
+    padding:10px 12px;margin:12px 0 0;color:var(--ink-faint);
+    font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;
+  }
+  details{margin-top:14px;border-top:1px solid var(--edge);padding-top:13px}
+  summary{cursor:pointer;color:var(--ink-dim);font-size:13px}
+  summary:focus-visible{outline:2px solid var(--teal-soft);outline-offset:2px}
+  details ol{margin:12px 0 0;padding-left:19px;color:var(--ink-dim);font-size:13.5px}
+  details li{margin-bottom:7px}
+
+  .note{
+    max-width:560px;margin:14px auto 0;padding:16px 20px;
+    border-left:2px solid var(--teal);background:var(--ticket);
+    border-radius:0 12px 12px 0;font-size:13.5px;color:var(--ink-dim);
+  }
+  .note b{color:var(--ink);font-weight:500}
+  .stop{
+    max-width:560px;margin:0 auto;padding:18px 20px;background:var(--ticket);
+    border:1px solid var(--edge);border-left:2px solid var(--alarm);
+    border-radius:0 var(--r) var(--r) 0;
+  }
+  .stop p{margin:0;font-size:14px;color:var(--ink-dim)}
+  .stop b{color:var(--ink)}
+  .foot{max-width:560px;margin:22px auto 0;text-align:center;font-size:12px;line-height:1.7;color:var(--ink-faint)}
+  .foot a{color:var(--ink-dim)}
+  .gone{display:none !important}
+
+  @media (prefers-reduced-motion:reduce){ .ticket{animation:none} .go:active{transform:none} }
+  @media (max-width:380px){ .who .value{font-size:25px} .facts{gap:18px} }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="logo sign"><i></i>Амстердамский экспресс</div>
+  <a class="versa" href="https://t.me/YourBotName" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M23.1 3.3 19.6 20c-.3 1.2-1 1.5-2 .9l-5.5-4-2.6 2.6c-.3.3-.5.5-1.1.5l.4-5.6L18.9 5.2c.4-.4.1-.6-.4-.3L6.9 12.5l-4.7-1.5c-1-.3-1-1 .2-1.5L21.4 2c.9-.3 1.7.2 1.7 1.3Z"/></svg>
+    Написать Версе
+  </a>
+</div>
+
+<div class="stop gone" id="stop">
+  <p><b>Ссылка неполная.</b><br>
+  В ней потерялся личный код. Попроси прислать её заново — одним сообщением, целиком.</p>
+</div>
+
+<div id="all" class="gone">
+
+  <div class="sheet">
+    <div class="ticket">
+
+      <div class="stub">
+        <div class="who-row">
+          <div class="who">
+            <p class="label">Пассажир</p>
+            <p class="value" id="who">—</p>
+          </div>
+          <div class="stamp wait" id="stamp">проверяю<br>билет</div>
+        </div>
+
+        <div class="facts">
+          <div><p class="label">Направление</p><p class="value">Амстердам</p></div>
+          <div><p class="label">Потрачено</p><p class="value" id="used">—</p></div>
+          <div><p class="label">Маршрутов</p><p class="value">три</p></div>
+        </div>
+      </div>
+
+      <div class="tear"><span></span></div>
+
+      <div class="board">
+        <h2>Посадка</h2>
+        <div class="platforms" id="platforms" role="tablist" aria-label="Выбор системы"></div>
+        <p class="said" id="platSaid"></p>
+
+        <div class="step">
+          <div class="step-head"><span class="step-no">1</span><h3>Поставь приложение</h3></div>
+          <p id="pickSaid"></p>
+          <div id="getHere"></div>
+          <div class="alt" id="altHere"></div>
+        </div>
+
+        <div class="step">
+          <div class="step-head"><span class="step-no">2</span><h3>Пробей билет</h3></div>
+          <p id="punchSaid">Приложение уже стоит? Нажимай — оно откроется и добавит подписку само.</p>
+          <div id="punchHere"></div>
+          <button class="go quiet" id="copy" type="button">Скопировать ссылку вручную</button>
+          <p class="said-copy" id="copySaid"></p>
+          <details>
+            <summary>Не сработало — что делать</summary>
+            <ol>
+              <li>Нажми «Скопировать ссылку вручную».</li>
+              <li>Открой приложение.</li>
+              <li id="byHand">Добавь профиль из буфера обмена.</li>
+              <li>Включи VPN и разреши подключение, если система спросит.</li>
+            </ol>
+            <code class="raw" id="raw"></code>
+          </details>
+        </div>
+
+        <details class="more" id="more">
+          <summary id="moreSaid">Другие приложения</summary>
+          <div id="cars"></div>
+        </details>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="note">
+    <b id="firstRun">Настраивать ничего не надо.</b><br>
+    Российские сайты, банки и Госуслуги <b>работают как обычно</b>: они идут мимо
+    тоннеля напрямую и видят твой домашний адрес, а не наш сервер. Ничего не
+    блокируется и выключать VPN не нужно. Правила приезжают внутри подписки и
+    обновляются сами — если что-то поменяем, тебе достаточно нажать «обновить
+    подписку».
+  </div>
+
+  <p class="foot">
+    Перестало работать? Нажми в приложении «Обновить подписку».<br>
+    Не помогло — <a href="https://t.me/YourBotName" target="_blank" rel="noopener">напиши Версе</a>.
+  </p>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // Каждому приложению — свой формат подписки: правила обхода лежат ВНУТРИ
+  // конфига, а не в настройках приложения. Адрес берём от самой страницы,
+  // чтобы он не разъезжался при переносе.
+  var GEN_BASE = location.origin + location.pathname.replace(/[^\/]*$/, "") + "s/";
+
+  function readCode(){
+    var h = (location.hash || "").replace(/^#/, "").trim();
+    if (h) return h;
+    var m = /[?&]s=([^&]+)/.exec(location.search || "");
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  var code = readCode();
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(code)) {
+    document.getElementById("stop").classList.remove("gone");
+    return;
+  }
+
+  function subUrl(fmt){ return GEN_BASE + code + "/" + fmt; }
+
+  // Ссылка выбранного приложения: её копирует кнопка и показывает блок «вручную».
+  var SUB = subUrl("links");
+
+  var PLAY  = "https://play.google.com/store/apps/details?id=";
+  var APPLE = "https://apps.apple.com/app/id";
+  var HID   = "https://github.com/hiddify/hiddify-app/releases/latest/download/";
+  var INCY  = "https://github.com/INCY-DEV/incy-platforms/releases/latest/download/";
+  var KOALA = "https://github.com/coolcoala/koala-clash/releases/latest/download/";
+
+  // store — установка одним нажатием; file — прямой файл; link — кнопка «подключить».
+  // Кнопку ставим только там, где схема подтверждена: мёртвая кнопка хуже её отсутствия.
+  var APPS = {
+    hiddify:{
+      name:"Hiddify", fmt:"singbox", rules:true, hy2:true,
+      note:"Понимает все три входа, включая Hysteria2 — самый живучий из них.",
+      link:function(u){ return "hiddify://install-sub?url=" + encodeURIComponent(u); },
+      hand:"Нажми «+» и выбери «Добавить из буфера обмена».",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      p:{ android:{store:[PLAY+"app.hiddify.com","Установить из Play Market"], file:[HID+"Hiddify-Android-universal.apk","Скачать APK файлом"]},
+          ios:{store:[APPLE+"6596777532","Установить из App Store"]},
+          windows:{file:[HID+"Hiddify-Windows-Setup-x64.exe","Скачать установщик"]},
+          macos:{file:[HID+"Hiddify-MacOS.dmg","Скачать DMG"], store:[APPLE+"6596777532","Установить из App Store"]},
+          linux:{file:[HID+"Hiddify-Linux-x64-AppImage.AppImage","Скачать AppImage"]} }
+    },
+    incy:{
+      name:"INCY", fmt:"incy", rules:true, hy2:true,
+      note:"Русское, простое. Им пользуется тот, кто выдал тебе билет.",
+      link:function(u){ return "incy://add/" + u; },
+      hand:"Открой приложение, добавь подписку из буфера обмена.",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      p:{ android:{store:[PLAY+"llc.itdev.incy","Установить из Play Market"], file:[INCY+"Incy.apk","Скачать APK файлом"]},
+          ios:{store:[APPLE+"6756943388","Установить из App Store"]},
+          windows:{file:[INCY+"incy-windows-setup.exe","Скачать установщик"]},
+          macos:{file:[INCY+"incy-macos-arm64.dmg","Скачать DMG (Apple Silicon)"]},
+          linux:{file:[INCY+"incy-linux-x64.deb","Скачать .deb"]} }
+    },
+    streisand:{
+      name:"Streisand", fmt:"links", rules:false, hy2:true,
+      note:"Бесплатное и лёгкое, хорошо держит рваную мобильную связь.",
+      link:function(u){ return "streisand://import/" + u; },
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"Нажми «+» вверху справа и вставь из буфера обмена.",
+      p:{ ios:{store:[APPLE+"6450534064","Установить из App Store"]},
+          macos:{store:[APPLE+"6450534064","Установить из App Store"]} }
+    },
+    happ:{
+      name:"Happ", fmt:"links", rules:true, hy2:true,
+      note:"Целиком на русском, ничего лишнего.",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      link:function(u){ return "happ://add/" + u; },
+      hand:"Нажми «+» и добавь подписку из буфера обмена.",
+      p:{ android:{store:[PLAY+"com.happproxy","Установить из Play Market"]},
+          ios:{store:[APPLE+"6504287215","Установить из App Store"]} }
+    },
+    v2raytun:{
+      name:"v2RayTun", fmt:"links", rules:false, hy2:true,
+      note:"Популярное, шустрое. Под iPhone настоящей версии нет — в App Store только подделки.",
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"«+» → «Импорт из буфера обмена».",
+      p:{ android:{store:[PLAY+"com.v2raytun.android","Установить из Play Market"]} }
+    },
+    koala:{
+      name:"Koala Clash", fmt:"clash", rules:true, hy2:true,
+      note:"Настольное, с тонкой настройкой маршрутов. Под телефоны сборок нет.",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      hand:"Профили → добавить по ссылке из буфера обмена.",
+      p:{ windows:{file:[KOALA+"Koala.Clash_x64-setup.exe","Скачать установщик"]},
+          macos:{file:[KOALA+"Koala.Clash_x64.pkg","Скачать PKG"]},
+          linux:{file:[KOALA+"Koala.Clash_amd64.deb","Скачать .deb"]} }
+    },
+    karing:{
+      name:"Karing", fmt:"singbox", rules:true, hy2:true,
+      note:"Аккуратное, много настроек. Запасной вариант для iPhone.",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      hand:"«+» → «Добавить из буфера обмена».",
+      p:{ ios:{store:[APPLE+"6472431552","Установить из App Store"]},
+          macos:{store:[APPLE+"6472431552","Установить из App Store"]} }
+    },
+    singbox:{
+      name:"sing-box", fmt:"singbox", rules:true, hy2:true,
+      note:"Официальный клиент, без украшений.",
+      link:function(u){ return "sing-box://import-remote-profile?url=" + encodeURIComponent(u); },
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      hand:"Вкладка «Profiles» → «+» → «Remote» → вставь ссылку.",
+      p:{ android:{store:[PLAY+"io.nekohasekai.sfa","Установить из Play Market"]},
+          macos:{file:["dl/sfm-macos","Скачать PKG"]} }
+    },
+    verge:{
+      name:"Clash Verge Rev", fmt:"clash", rules:true, hy2:true,
+      note:"Когда нужен полный контроль над маршрутами.",
+      first:"Правила обхода едут внутри подписки — настраивать ничего не надо.",
+      link:function(u){ return "clash://install-config?url=" + encodeURIComponent(u); },
+      hand:"Вкладка «Profiles» → вставь ссылку в поле сверху → «Import».",
+      p:{ windows:{file:["dl/verge-windows","Скачать установщик"]},
+          macos:{file:["dl/verge-macos","Скачать DMG"]},
+          linux:{file:["dl/verge-linux","Скачать .deb"]} }
+    },
+    nekobox:{
+      name:"NekoBox", fmt:"links", rules:false, hy2:true,
+      note:"Для тех, кто любит копаться в настройках.",
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"Меню → «Группы» → «+» → тип «Подписка» → вставь ссылку.",
+      p:{ android:{file:["dl/nekobox-android","Скачать APK"]} }
+    },
+    nekoray:{
+      name:"NekoRay", fmt:"links", rules:false, hy2:true,
+      note:"Настольный NekoBox. Сборка с конца 2024 года, но рабочая.",
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"«Программа» → «Настройки групп» → «+» → тип «Подписка».",
+      p:{ windows:{file:["dl/nekoray-windows","Скачать архив"]},
+          linux:{file:["dl/nekoray-linux","Скачать AppImage"]} }
+    },
+    v2box:{
+      name:"V2Box", fmt:"links", rules:false, hy2:true,
+      note:"Ещё один запасной для iPhone.",
+      link:function(u){ return "v2box://install-sub?url=" + encodeURIComponent(u); },
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"Вкладка «Configs» → «+» → «Add subscription».",
+      p:{ ios:{store:[APPLE+"6446814690","Установить из App Store"]} }
+    },
+    shadowrocket:{
+      name:"Shadowrocket", fmt:"links", rules:false, hy2:true, paid:true,
+      note:"Платное, около трёх долларов. Берут, когда бесплатные не подошли.",
+      link:function(u){ return "sub://" + btoa(u).replace(/=+$/,""); },
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"Нажми «+», тип «Subscribe», вставь ссылку.",
+      p:{ ios:{store:[APPLE+"932747118","Установить из App Store"]} }
+    },
+    v2rayng:{
+      name:"v2rayNG", fmt:"links", rules:false, hy2:false,
+      note:"Возьмёт только два входа: Hysteria2 его ядро не понимает. Из Play Market убрали.",
+      link:function(u){ return "v2rayng://install-sub?url=" + encodeURIComponent(u); },
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"«+» вверху справа → «Импорт из буфера обмена».",
+      p:{ android:{file:["dl/v2rayng-android","Скачать APK"]} }
+    },
+    v2rayn:{
+      name:"v2rayN", fmt:"links", rules:false, hy2:false,
+      note:"Возьмёт только два входа: Hysteria2 его ядро не понимает.",
+      first:"Это приложение правила из подписки не берёт. Включи обход российских сайтов в его настройках сам, иначе ВК, банки и Госуслуги увидят чужую страну.",
+      hand:"«Подписки» → «Настроить подписку» → вставь ссылку → «Обновить».",
+      p:{ windows:{file:["dl/v2rayn-windows","Скачать архив"]},
+          linux:{file:["dl/v2rayn-linux","Скачать .deb"]} }
+    }
+  };
+
+  var PLATFORMS = [
+    { id:"android", name:"Android", said:"Телефон или планшет на Android.",
+      apps:["hiddify","incy","happ","v2raytun","singbox","nekobox","v2rayng"] },
+    { id:"ios", name:"iPhone", said:"iPhone или iPad.",
+      apps:["streisand","happ","incy","hiddify","karing","v2box","shadowrocket"] },
+    { id:"windows", name:"Windows", said:"Компьютер на Windows.",
+      apps:["hiddify","incy","koala","verge","nekoray","v2rayn"] },
+    { id:"macos", name:"Mac", said:"Mac.",
+      apps:["hiddify","streisand","incy","koala","karing","verge","singbox"] },
+    { id:"linux", name:"Linux", said:"Компьютер на Linux.",
+      apps:["hiddify","incy","koala","verge","nekoray","v2rayn"] }
+  ];
+
+  function guess(){
+    var u = navigator.userAgent || "";
+    if (/Android/i.test(u)) return "android";
+    if (/iPhone|iPad|iPod/i.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1)) return "ios";
+    if (/Windows/i.test(u)) return "windows";
+    if (/Mac OS X/i.test(u)) return "macos";
+    if (/Linux|X11|CrOS/i.test(u)) return "linux";
+    return "windows";
+  }
+
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function anchor(cls, url, text){
+    var a = el("a", cls, text);
+    a.href = url; a.rel = "noopener";
+    if (/^https?:/.test(url) && !/^https:\/\/apps\.apple\.com/.test(url)) a.target = "_blank";
+    return a;
+  }
+
+  var now = guess();
+  var platBox = document.getElementById("platforms");
+  var carBox  = document.getElementById("cars");
+  var punch   = document.getElementById("punchHere");
+
+  function draw(){
+    var plat = PLATFORMS.filter(function(p){ return p.id === now; })[0];
+    document.getElementById("platSaid").textContent = plat.said;
+
+    platBox.textContent = "";
+    PLATFORMS.forEach(function(p){
+      var b = el("button", "plat", p.name);
+      b.type = "button";
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", p.id === now ? "true" : "false");
+      b.onclick = function(){ now = p.id; draw(); };
+      platBox.appendChild(b);
+    });
+
+    var lead = null, rest = [];
+    plat.apps.forEach(function(key){
+      var a = APPS[key];
+      if (!a.p[now]) return;
+      if (!lead) { lead = a; return; }
+      rest.push(a);
+    });
+
+    var box = lead.p[now];
+    var said = document.getElementById("pickSaid");
+    said.textContent = "";
+    said.appendChild(el("b", null, lead.name));
+    said.appendChild(document.createTextNode(" — " + lead.note.charAt(0).toLowerCase() + lead.note.slice(1)));
+
+    var get = document.getElementById("getHere");
+    var alt = document.getElementById("altHere");
+    get.textContent = ""; alt.textContent = "";
+    if (box.store) {
+      get.appendChild(anchor("go", box.store[0], box.store[1]));
+      if (box.file) alt.appendChild(anchor("", box.file[0], box.file[1]));
+    } else {
+      get.appendChild(anchor("go", box.file[0], box.file[1]));
+    }
+
+    punch.textContent = "";
+    // Формат подписки зависит от приложения, поэтому адрес пересчитываем на
+    // каждую отрисовку — и кнопка «скопировать», и блок «вручную» берут его же.
+    SUB = subUrl(lead.fmt);
+    document.getElementById("raw").textContent = SUB;
+    var pSaid = document.getElementById("punchSaid");
+    if (lead.link) {
+      punch.appendChild(anchor("go ghost", lead.link(SUB), "Подключить в " + lead.name));
+      pSaid.textContent = "Приложение уже стоит? Нажимай — оно откроется и добавит подписку само.";
+    } else {
+      pSaid.textContent = "У " + lead.name + " нет кнопки быстрого добавления: скопируй ссылку и вставь в приложении.";
+      var b = el("button", "go ghost", "Скопировать ссылку");
+      b.type = "button"; b.id = "copyMain";
+      punch.appendChild(b);
+    }
+    if (lead.rules === false) {
+      pSaid.textContent += " У " + lead.name + " правила обхода из подписки не работают — их придётся включить в настройках самому.";
+    }
+    document.getElementById("byHand").textContent = lead.hand || "Добавь профиль из буфера обмена.";
+    document.getElementById("firstRun").textContent =
+      lead.first || "Если в настройках приложения есть обход российских сайтов — включи его.";
+    var cm = document.getElementById("copyMain");
+    if (cm) cm.onclick = doCopy;
+
+    carBox.textContent = "";
+    rest.forEach(function(a){
+      var b2 = a.p[now];
+      var car = el("div", "car");
+      var top = el("div", "car-top");
+      top.appendChild(el("span", "car-name", a.name));
+      if (a.paid)          top.appendChild(el("span", "mark", "платное"));
+      if (a.hy2 === false) top.appendChild(el("span", "mark warn", "без Hysteria2"));
+      if (a.rules === false) top.appendChild(el("span", "mark warn", "правила вручную"));
+      car.appendChild(top);
+      car.appendChild(el("p", null, a.note));
+      var acts = el("div", "acts");
+      if (b2.store) acts.appendChild(anchor("go small", b2.store[0], b2.store[1]));
+      if (b2.file)  acts.appendChild(anchor("go small", b2.file[0], b2.file[1]));
+      if (a.link)   acts.appendChild(anchor("go small", a.link(subUrl(a.fmt)), "Подключить"));
+      car.appendChild(acts);
+      if (!a.link) car.appendChild(el("p", "hand", a.hand));
+      carBox.appendChild(car);
+    });
+    var more = document.getElementById("more");
+    if (rest.length) {
+      more.classList.remove("gone");
+      document.getElementById("moreSaid").textContent =
+        "Другие приложения для " + plat.name + " — " + rest.length;
+    } else {
+      more.classList.add("gone");
+    }
+  }
+
+  function weight(b){
+    if (!b) return "ничего";
+    var u = ["Б","КБ","МБ","ГБ","ТБ"], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    var n = (b >= 10 || i < 2) ? String(Math.round(b)) : b.toFixed(1).replace(".", ",");
+    return n + " " + u[i];
+  }
+
+  (function(){
+    var stamp = document.getElementById("stamp");
+    var x = new XMLHttpRequest();
+    x.open("GET", "info?sub=" + encodeURIComponent(code), true);
+    x.onload = function(){
+      if (x.status !== 200) {
+        stamp.className = "stamp void";
+        stamp.innerHTML = "билет<br>не найден";
+        return;
+      }
+      var d;
+      try { d = JSON.parse(x.responseText); } catch (e) { return; }
+      document.getElementById("who").textContent  = d.name || "—";
+      document.getElementById("used").textContent = weight(d.used);
+      stamp.className = d.enable ? "stamp" : "stamp void";
+      stamp.innerHTML = d.enable ? "билет<br>действителен" : "билет<br>закрыт";
+    };
+    x.onerror = function(){ stamp.className = "stamp wait"; stamp.innerHTML = "связи<br>нет"; };
+    x.send();
+  })();
+
+  function doCopy(){
+    var said = document.getElementById("copySaid");
+    var done = function(ok){ said.textContent = ok ? "Скопировано" : "Скопируй вручную из поля в подсказке"; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(SUB).then(function(){ done(true); }, function(){ done(false); });
+    } else {
+      var t = document.createElement("textarea");
+      t.value = SUB; t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.appendChild(t); t.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(t);
+      done(ok);
+    }
+  }
+
+  document.getElementById("raw").textContent = SUB;
+  document.getElementById("copy").onclick = doCopy;
+  document.getElementById("all").classList.remove("gone");
+  draw();
+})();
+</script>
+</body>
+</html>

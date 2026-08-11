@@ -1,0 +1,12 @@
+[Unit]
+Description=Ограничение подписки и панели 3x-ui российскими сетями
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ru-allowlist.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
