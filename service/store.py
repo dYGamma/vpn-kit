@@ -11,7 +11,7 @@
 """
 import json
 import os
-import random
+import secrets
 import re
 import sqlite3
 import string
@@ -29,7 +29,11 @@ def _conn():
 
 
 def _rand(n):
-    return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(n))
+    # secrets, а не random: этой строкой генерируется КОД ПОДПИСКИ, а он —
+    # единственное, что её защищает. Mersenne Twister из random для секретов
+    # не годится: его состояние восстанавливается по выданным значениям.
+    return "".join(secrets.choice(string.ascii_lowercase + string.digits)
+                   for _ in range(n))
 
 
 def _free_email(cur, wanted):

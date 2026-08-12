@@ -48,8 +48,22 @@ def _xui_links(sub_id):
     """Три ссылки подключения, как их отдаёт панель. Она — источник истины по
     ключам Reality и паролям, поэтому параметры не выводим заново, а читаем."""
     req = urllib.request.Request(XUI_SUB + sub_id, headers={"User-Agent": "sub-builder"})
-    with urllib.request.urlopen(req, timeout=10, context=ssl.create_default_context()) as r:
-        raw = r.read()
+    # Повторяем при срыве: разовая заминка резолвера или панели не должна
+    # превращаться в 502. Приложение на ошибку может стереть профиль целиком,
+    # и человек останется без доступа из-за мгновенного сбоя.
+    last = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=10,
+                                        context=ssl.create_default_context()) as r:
+                raw = r.read()
+            break
+        except Exception as e:
+            last = e
+            if attempt < 2:
+                time.sleep(0.7 * (attempt + 1))
+    else:
+        raise last
     try:
         txt = base64.b64decode(raw + b"==").decode("utf-8")
     except Exception:

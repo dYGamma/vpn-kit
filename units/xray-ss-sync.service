@@ -3,4 +3,4 @@ Description=Синхронизация клиентов резервного в�
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/usr/local/sbin/xray-ss-sync.py && systemctl reload-or-restart xray-ss'
+ExecStart=/usr/local/sbin/xray-ss-apply.sh

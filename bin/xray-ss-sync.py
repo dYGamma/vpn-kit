@@ -45,8 +45,20 @@ cfg = {
         {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"},
     ]},
 }
+# Сравниваем с тем, что уже лежит: Xray не умеет перечитывать конфиг, поэтому
+# любой «reload» превращается в restart и рвёт живые соединения. Перезапускать
+# можно ТОЛЬКО когда список клиентов действительно изменился.
+new_text = json.dumps(cfg, indent=1, ensure_ascii=False)
+try:
+    same = open(CFG, encoding="utf-8").read() == new_text
+except OSError:
+    same = False
+if same:
+    print("клиентов в конфиге: %d, изменений нет" % len(keys["users"]))
+    raise SystemExit(3)
 tmp = CFG + ".tmp"
-json.dump(cfg, open(tmp, "w"), indent=1, ensure_ascii=False)
+open(tmp, "w", encoding="utf-8").write(new_text)
+os.chmod(tmp, 0o600)
 os.replace(tmp, CFG)
 os.umask(0o077)
 json.dump(keys, open(KEYS + ".tmp", "w"), indent=1)

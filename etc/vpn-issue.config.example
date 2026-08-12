@@ -4,3 +4,7 @@ SECRET=YOUR_SECRET
 PAGE_BASE=https://SERVER_IP:2053/PAGE_PATH/
 # Секретный путь, по которому nginx проксирует API сервиса наружу
 API_PATH=API_PATH
+# Адрес узла. Установщик подставит его вместо заглушек при копировании файлов
+SERVER_IP=SERVER_IP
+# Куда писать за помощью — попадёт в подписку как support-url
+SUPPORT_URL=https://t.me/YourBotName
