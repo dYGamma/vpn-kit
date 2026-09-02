@@ -27,7 +27,7 @@ die()   { printf '\nОСТАНОВ: %s\n' "$*" >&2; exit 1; }
 # --- проверки до любых изменений ------------------------------------------
 head_ "проверка окружения"
 [ "$(id -u)" = 0 ] || die "нужны права root"
-[ -f "$XUI_DB" ] || die "нет базы панели $XUI_DB — сначала поставьте 3x-ui"
+[ -f "$XUI_DB" ] || die "нет базы панели $XUI_DB — сначала прогоните ./bootstrap.sh"
 [ -x "$XRAY" ]   || die "нет бинаря Xray $XRAY"
 command -v sqlite3 >/dev/null || die "нужен sqlite3: apt install sqlite3"
 command -v python3 >/dev/null || die "нужен python3"

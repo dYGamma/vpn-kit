@@ -10,7 +10,7 @@ Hysteria спрашивает разрешение на каждое подкл�
 """
 import json
 import sqlite3
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DB = "file:/etc/x-ui/x-ui.db?mode=ro"
 LISTEN = ("127.0.0.1", 8790)
@@ -55,5 +55,21 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class Server(ThreadingHTTPServer):
+    """Сервер обязан быть многопоточным, и это не оптимизация.
+
+    Спрашивают его ДВА процесса Hysteria (обычный вход и обфусцированный), и
+    каждый держит соединение открытым: у нас HTTP/1.1, у Go в клиенте включён
+    keep-alive. Однопоточный HTTPServer обслуживает по одному соединению за раз
+    и к следующему возвращается только после того, как предыдущее закроют, —
+    то есть первый спросивший занимал сервер на всё время своей keep-alive
+    паузы, а второй ждал и получал таймаут. Наружу это выглядело так: из двух
+    входов Hysteria работает РОВНО ОДИН, а после простоя они меняются местами.
+    Клиент проигравшего входа видит `authentication error, HTTP status code:
+    302` — 302 отдаёт маскировка, потому что авторизация не ответила вовремя.
+    """
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    HTTPServer(LISTEN, Handler).serve_forever()
+    Server(LISTEN, Handler).serve_forever()

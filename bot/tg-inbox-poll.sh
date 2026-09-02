@@ -101,12 +101,16 @@ done
 
 # Обращения чужих людей → мост выдачи VPN. Заводит доступы не он, а босс:
 # мост лишь создаёт заявку и присылает боссу команды для ответа.
+# Разделитель \x1f, а НЕ табуляция: табуляция для read — пробельный символ,
+# поэтому пустое поле схлопывается и поля съезжают. Так у человека без
+# username текст сообщения попал в поле имени, сервис получил пустой текст и
+# не увидел просьбы — заявка не создалась, человек ждал зря.
 python3 -c '
 import json, sys
 for v in json.load(open(sys.argv[1])).get("vpn", []):
-    print("%s\t%s\t%s" % (v.get("id") or "", v.get("username") or "",
-                            (v.get("text") or "").replace("\t", " ").replace("\n", " ")))
-' "$OUT_FILE" 2>/dev/null | while IFS=$'\t' read -r VID VUN VTX; do
+    print("%s\x1f%s\x1f%s" % (v.get("id") or "", v.get("username") or "",
+                                (v.get("text") or "").replace("\n", " ")))
+' "$OUT_FILE" 2>/dev/null | while IFS=$'\x1f' read -r VID VUN VTX; do
   [ -n "$VID" ] && /root/AVS-office/bin/vpn-gate.sh request "$VID" "$VUN" "$VTX" >/dev/null 2>&1
 done
 
@@ -161,7 +165,13 @@ if [ -s "$QUEUE" ] || [ -s "$PROCESSING" ]; then
     # мгновенный «печатает…» — юзер видит, что Верса думает (сессия продлит сама)
     curl -s -m 10 "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendChatAction" \
       -d chat_id="${TG_BOSS_CHAT_ID:-0}" -d action=typing >/dev/null 2>&1 || true
-    /root/AVS-office/run-shift.sh chat sonnet >/dev/null 2>&1 &
+    # 7>&- 8>&- — закрыть НАШИ замки у ребёнка, и это не косметика.
+    # flock живёт на открытом файле, а не на процессе: фоновая чат-сессия
+    # наследовала дескриптор 7 (.poll.lock) и держала его все свои минуты.
+    # Пока она работала, каждый следующий тик поллера молча выходил на
+    # `flock -n 7` — не забирались новые сообщения и не работал мост выдачи
+    # доступов. Наружу это выглядит как «бот молчит», без единой ошибки в логе.
+    /root/AVS-office/run-shift.sh chat sonnet >/dev/null 2>&1 7>&- 8>&- &
   fi
 fi
 exit 0

@@ -499,7 +499,20 @@ def build_clash(sub_id, title):
             # без no-resolve: иначе правило по российским адресам не сработает
             # для доменов, которых нет в списках, — а таких хватает
             "RULE-SET,ru-ip,DIRECT",
-            "GEOIP,private,DIRECT,no-resolve",
+            # Раньше здесь стояло GEOIP,private — и это была единственная строка
+            # во всём конфиге, ради которой mihomo лез на GitHub за базой MMDB.
+            # Не скачал — не запустился ВЕСЬ конфиг, а не одно правило; из России
+            # GitHub доступен через раз, то есть подписка ломалась ровно в момент
+            # установки. Диапазоны частных сетей неизменны, база для них не нужна.
+            "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+            "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+            "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+            "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+            "IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
+            "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
+            "IP-CIDR6,::1/128,DIRECT,no-resolve",
+            "IP-CIDR6,fc00::/7,DIRECT,no-resolve",
+            "IP-CIDR6,fe80::/10,DIRECT,no-resolve",
             "MATCH,Тоннель",
         ],
     }
