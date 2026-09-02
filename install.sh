@@ -191,6 +191,23 @@ for S in x-ui xray-ss hysteria-server hysteria-obfs hysteria-auth vpn-issue ngin
   printf '  %-18s %s\n' "$S" "$(systemctl is-active $S 2>/dev/null || echo нет)"
 done
 echo
-say "страницу положите в /var/www/vpn-help/$PAGE_PATH/index.html из www/"
-say "правила nginx возьмите из etc/nginx-vpn-help.conf.example"
-say "панель наблюдения: vpnctl"
+# Раньше здесь стояли две инструкции «положите руками». Класть должен скрипт:
+# страница и правила nginx — это ровно та работа, которую он и обязан делать.
+PAGE_DIR="/var/www/vpn-help/$PAGE_PATH"
+if [ -s "$PAGE_DIR/index.html" ]; then
+  say "страница на месте: $PAGE_BASE/"
+else
+  install -d -m 755 "$PAGE_DIR"
+  # Берём уже подставленную копию из STAGE, а не исходник с заглушками.
+  if [ -s "$STAGE/www/index.html" ] && install -m 644 "$STAGE/www/index.html" "$PAGE_DIR/index.html"; then
+    say "страница положена: $PAGE_BASE/"
+  else
+    say "ВНИМАНИЕ: не удалось положить страницу в $PAGE_DIR/index.html"
+  fi
+fi
+if [ -f /etc/nginx/conf.d/vpn-help.conf ] || grep -rqs "vpn-help" /etc/nginx/sites-enabled/ 2>/dev/null; then
+  say "правила nginx на месте"
+else
+  say "правил nginx нет — их кладёт bootstrap.sh, прогоните его"
+fi
+say "панель наблюдения: sudo vpnctl"

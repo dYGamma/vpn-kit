@@ -532,7 +532,12 @@ class UI:
 def main():
     if os.geteuid() != 0:
         raise SystemExit("нужны права root: sudo vpnctl")
-    curses.wrapper(lambda scr: UI(scr).loop())
+    try:
+        curses.wrapper(lambda scr: UI(scr).loop())
+    except KeyboardInterrupt:
+        # Ctrl+C — обычный способ выйти. Без этого человек получал простыню
+        # трейсбека там, где ждал просто возврата в оболочку.
+        pass
 
 
 if __name__ == "__main__":
