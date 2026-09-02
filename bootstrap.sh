@@ -287,6 +287,34 @@ if [ -f "$XUI_DB" ] && [ "$DRY" = 0 ]; then
 fi
 
 # --- 6. сертификат на IP ---------------------------------------------------
+# --- локальный фаервол ----------------------------------------------------
+# Ubuntu часто идёт с включённым ufw, который пропускает только SSH. Тогда все
+# наши порты закрыты — причём изнутри сети тоже, и человек ищет причину в
+# панели, в роутере, где угодно, только не здесь. Открываем явно.
+head_ "локальный фаервол"
+FW_PORTS="80/tcp 443/tcp 8443/tcp 2053/tcp 36712/udp 20000:50000/udp"
+[ -n "${PANEL_PORT:-}" ] && FW_PORTS="$FW_PORTS $PANEL_PORT/tcp"
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] открыл бы в ufw: $FW_PORTS"
+  else
+    for FP in $FW_PORTS; do ufw allow "$FP" >/dev/null 2>&1; done
+    say "в ufw открыто: $FW_PORTS"
+  fi
+elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] открыл бы в firewalld: $FW_PORTS"
+  else
+    # firewalld пишет диапазон через дефис, а не через двоеточие, как ufw:
+    # 20000:50000/udp у него не принимается вовсе.
+    for FP in $FW_PORTS; do firewall-cmd --permanent --add-port="${FP/:/-}" >/dev/null 2>&1; done
+    firewall-cmd --reload >/dev/null 2>&1
+    say "в firewalld открыто: $FW_PORTS"
+  fi
+else
+  skip "локальный фаервол не включён — открывать нечего"
+fi
+
 # --- проброс портов на роутере ------------------------------------------
 if is_private "$LOCAL_IP"; then
   head_ "проброс портов на роутере"
