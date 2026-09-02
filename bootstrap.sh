@@ -18,7 +18,14 @@ cd "$(dirname "$0")"
 CFG=/etc/vpn-issue/config
 CERT_DIR=/root/cert/ip
 DRY=0
-[ "${1:-}" = "--dry-run" ] && DRY=1
+NO_INSTALL=0
+for A in "$@"; do
+  case "$A" in
+    --dry-run)    DRY=1 ;;
+    --no-install) NO_INSTALL=1 ;;
+    *) printf 'использование: %s [--dry-run] [--no-install]\n' "$0" >&2; exit 2 ;;
+  esac
+done
 
 say()  { printf '  %s\n' "$*"; }
 skip() { printf '  · %s\n' "$*"; }
@@ -91,8 +98,10 @@ done
 # --- 2. пакеты -------------------------------------------------------------
 head_ "пакеты"
 NEED=""
-for c in curl sqlite3 python3 nginx socat openssl; do
-  command -v "$c" >/dev/null || NEED="$NEED $c"
+for c in curl sqlite3 python3 nginx socat openssl upnpc; do
+  # пакет с upnpc называется иначе, чем сама команда
+  case "$c" in upnpc) PKG=miniupnpc ;; *) PKG="$c" ;; esac
+  command -v "$c" >/dev/null || NEED="$NEED $PKG"
 done
 # iptables нужен для прыжков по портам Hysteria
 command -v iptables >/dev/null || NEED="$NEED iptables"
@@ -278,12 +287,65 @@ if [ -f "$XUI_DB" ] && [ "$DRY" = 0 ]; then
 fi
 
 # --- 6. сертификат на IP ---------------------------------------------------
+# --- проброс портов на роутере ------------------------------------------
+if is_private "$LOCAL_IP"; then
+  head_ "проброс портов на роутере"
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] попробовал бы открыть порты через UPnP"
+  elif ! command -v upnpc >/dev/null; then
+    say "нет upnpc — пробросьте порты на роутере руками"
+  else
+    UP=$(upnpc -s 2>/dev/null)
+    EXT=$(printf '%s' "$UP" | grep -oE 'ExternalIPAddress[ =]+[0-9.]+' | grep -oE '[0-9.]+$')
+    if [ -z "$EXT" ]; then
+      say "роутер не отвечает по UPnP (или он выключен в его настройках)"
+      say "пробросьте вручную на $LOCAL_IP: TCP 80, 443, 8443, 2053 и UDP 36712"
+    elif [ "$EXT" != "$IP4" ]; then
+      # Роутер видит снаружи не тот адрес, что весь интернет, — значит выше
+      # стоит ещё один NAT провайдера. Пробрасывать бесполезно: до роутера
+      # входящее соединение просто не дойдёт. Лечится только белым адресом
+      # у провайдера или узлом на обычном VPS.
+      say "у роутера снаружи адрес $EXT, а интернет видит $IP4 — это NAT провайдера"
+      say "проброс тут не поможет: до роутера входящее соединение не доходит."
+      say "Нужен белый адрес у провайдера, либо ставьте узел на обычный VPS."
+    else
+      OKN=0; BADN=0
+      for R in "80 TCP" "443 TCP" "8443 TCP" "2053 TCP" "36712 UDP"; do
+        set -- $R
+        if upnpc -e "vpn-kit" -a "$LOCAL_IP" "$1" "$1" "$2" >/dev/null 2>&1; then
+          OKN=$((OKN+1))
+        else
+          BADN=$((BADN+1)); say "не удалось открыть $2 $1"
+        fi
+      done
+      say "открыто портов: $OKN, не удалось: $BADN"
+      # Диапазон прыжков — тридцать тысяч портов, по UPnP их не открыть.
+      # Основной вход на 36712 работает и без них, прыжки просто не включатся.
+      say "диапазон прыжков UDP 20000-50000 через UPnP не открыть — если он нужен,"
+      say "пробросьте его на роутере одним правилом на $LOCAL_IP"
+    fi
+  fi
+fi
+
 head_ "сертификат"
+# Самоподписанный распознаём по совпадению издателя с владельцем. Это важно:
+# такой сертификат — временная затычка, чтобы узел собрался целиком, и на
+# каждом следующем прогоне надо снова пробовать выпустить настоящий, а не
+# считать «сертификат есть, пропускаем».
+SELF_SIGNED=0
 if [ -s "$CERT_DIR/fullchain.pem" ]; then
-  skip "сертификат уже лежит в $CERT_DIR"
+  CS=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -subject 2>/dev/null | sed 's/^subject=//')
+  CI=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -issuer 2>/dev/null | sed 's/^issuer=//')
+  [ -n "$CS" ] && [ "$CS" = "$CI" ] && SELF_SIGNED=1
+fi
+
+if [ -s "$CERT_DIR/fullchain.pem" ] && [ "$SELF_SIGNED" = 0 ]; then
+  skip "настоящий сертификат уже лежит в $CERT_DIR"
 elif [ "$DRY" = 1 ]; then
-  say "[сухой прогон] выпустил бы сертификат Let's Encrypt на адрес $IP4"
+  say "[сухой прогон] выпустил бы сертификат Let's Encrypt на адрес $IP4,"
+  say "[сухой прогон] а если не вышло — сделал бы временный самоподписанный"
 else
+  [ "$SELF_SIGNED" = 1 ] && say "сейчас стоит временный самоподписанный — пробую получить настоящий"
   [ -d /root/.acme.sh ] || run "curl -s https://get.acme.sh | sh -s email=admin@$IP4"
   install -d -m 700 "$CERT_DIR"
   # standalone: порт 80 на время выпуска должен быть свободен
@@ -293,10 +355,26 @@ else
     /root/.acme.sh/acme.sh --install-cert -d "$IP4" --ecc \
       --key-file "$CERT_DIR/privkey.pem" --fullchain-file "$CERT_DIR/fullchain.pem" \
       --reloadcmd 'systemctl restart x-ui; systemctl restart hysteria-server; systemctl reload nginx' >/dev/null 2>&1
+    SELF_SIGNED=0
     say "сертификат выпущен и прописан на автопродление"
+  elif [ "$SELF_SIGNED" = 1 ]; then
+    say "настоящий выпустить снова не вышло — оставляю временный"
   else
-    say "ВНИМАНИЕ: выпуск не удался. Сертификаты на голый IP выдаёт не любой CA"
-    say "и не всегда. Положите свой в $CERT_DIR/{fullchain,privkey}.pem и повторите."
+    # Просить человека сгенерировать сертификат руками — значит не
+    # автоматизировать ровно то, ради чего скрипт и написан. Делаем сами:
+    # без сертификата не поднимаются ни Hysteria, ни страница, и узел
+    # остаётся полусобранным. Настоящий подменит этот файл на месте.
+    say "выпуск не удался (нужен доступ снаружи по порту 80)"
+    say "делаю временный самоподписанный, чтобы узел собрался целиком"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+      -keyout "$CERT_DIR/privkey.pem" -out "$CERT_DIR/fullchain.pem" -days 3650 \
+      -subj "/CN=$IP4" -addext "subjectAltName=IP:$IP4" >/dev/null 2>&1
+    if [ -s "$CERT_DIR/fullchain.pem" ]; then
+      chmod 600 "$CERT_DIR/privkey.pem"; SELF_SIGNED=1
+      say "временный сертификат готов — клиенты ему не поверят, узел поднимется"
+    else
+      say "ВНИМАНИЕ: не удалось сделать даже временный, проверьте openssl"
+    fi
   fi
   systemctl start nginx >/dev/null 2>&1 || true
 fi
@@ -478,26 +556,42 @@ for S in x-ui hysteria-server nginx; do
 done
 echo
 
-# Чего не хватает. Раньше здесь безусловно печаталось «основание готово», даже
-# когда Hysteria не встала и nginx отверг конфиг: человек шёл ставить обвязку
-# поверх наполовину поднятого узла и ловил вторую волну ошибок.
-MISS=""
+# Разделяем НЕПОЛАДКИ и ЗАМЕЧАНИЯ. Раньше всё валилось в одну кучу, и узел,
+# у которого работали все три службы, объявлялся неполным из-за того, что
+# машина стоит за NAT, — а обвязку при этом ставить запрещалось. NAT это
+# внешнее обстоятельство, install.sh от него не зависит вообще.
+MISS=""; WARN=""
 command -v hysteria >/dev/null || MISS="$MISS\n  · Hysteria2 не установлена (GitHub был недоступен)"
 [ -s "$CERT_DIR/fullchain.pem" ] || MISS="$MISS\n  · нет сертификата в $CERT_DIR — без него не поднимутся ни Hysteria, ни страница"
 [ -f /etc/nginx/conf.d/vpn-help.conf ] || grep -rqs "vpn-help" /etc/nginx/sites-enabled/ 2>/dev/null \
   || MISS="$MISS\n  · страница установки не отдаётся: конфиг nginx не положен"
-if is_private "$LOCAL_IP"; then
-  MISS="$MISS\n  · машина за NAT: без проброса портов на роутере снаружи ничего не откроется"
-fi
+
+[ "${SELF_SIGNED:-0}" = 1 ] && WARN="$WARN\n  · сертификат временный, самоподписанный: узел работает, но клиенты ему не поверят.\n    Настоящий выпустится сам на следующем прогоне, как только адрес станет доступен снаружи по порту 80"
+is_private "$LOCAL_IP" && WARN="$WARN\n  · машина за NAT: снаружи ничего не откроется, пока на роутере не проброшены порты"
 
 PANEL_PATH=$(get PANEL_PATH); PANEL_PORT=$(get PANEL_PORT)
 [ -n "$PANEL_PORT" ] && say "панель: http://$IP4:$PANEL_PORT/${PANEL_PATH:-} (логин и пароль в $CFG)"
+[ -n "$WARN" ] && printf '\n  ЗАМЕЧАНИЯ:%b\n' "$WARN"
+
 if [ -n "$MISS" ]; then
   printf '\n  ОСНОВАНИЕ НЕПОЛНОЕ, не хватает:%b\n\n' "$MISS"
   say "Допоставьте недостающее и запустите bootstrap.sh снова — он продолжит"
   say "с этого места и уже сделанное не тронет. install.sh пока не запускайте."
-else
+  exit 1
+fi
+
+echo
+if [ "$DRY" = 1 ]; then
+  say "основание готово, дальше запустился бы install.sh"
+  say "(это был сухой прогон, на диск ничего не записано)"
+  exit 0
+fi
+if [ "$NO_INSTALL" = 1 ]; then
   say "основание готово. Дальше: ./install.sh — он поставит подписки,"
   say "выдачу доступов, Shadowsocks, обфускацию и сторож утечек."
+  exit 0
 fi
-[ "$DRY" = 1 ] && say "(это был сухой прогон, на диск ничего не записано)"
+# Ради этого скрипт и написан: человек не должен вводить руками ничего, что
+# машина может сделать сама. Основание собрано — сразу ставим обвязку.
+say "основание готово, ставлю обвязку"
+exec ./install.sh
