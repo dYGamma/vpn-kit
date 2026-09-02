@@ -130,7 +130,11 @@ SECRET=$SECRET
 API_PATH=/$API_PATH/
 PAGE_BASE=https://$IP4:2053/$PAGE_PATH
 SERVER_IP=$IP4
-SUPPORT_URL=https://t.me/YourBotName
+# Ссылка, по которой люди пишут за помощью (обычно телеграм-бот из bot/).
+# Пусто — не беда: install.sh тогда направит эти ссылки на саму страницу
+# установки. Заглушку сюда писать НЕЛЬЗЯ: install.sh подставит её саму в себя,
+# ничего не изменится, и его же проверка на остатки заглушек остановит установку.
+SUPPORT_URL=
 EOF
     chmod 600 "$CFG"
     say "создан $CFG (страница /$PAGE_PATH, API /$API_PATH)"

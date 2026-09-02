@@ -43,7 +43,31 @@ PAGE_PATH=$(basename "$(printf '%s' "$PAGE_BASE" | sed 's#/*$##')")
 
 # Если адрес не задан отдельно — берём его из PAGE_BASE
 [ -n "$SERVER_IP" ] || SERVER_IP=$(printf '%s' "$PAGE_BASE" | sed -nE 's#https?://([^:/]+).*#\1#p')
-[ -n "$SUPPORT_URL" ] || SUPPORT_URL="https://t.me/YourBotName"
+# Ссылка поддержки — единственное, чего машина знать не может. Раньше здесь
+# стояла ЗАГЛУШКА: подставлялась сама в себя, а проверка ниже находила её и
+# роняла установку. Теперь: пробуем узнать имя телеграм-бота по его токену,
+# а если и его нет — направляем такие ссылки на саму страницу установки.
+# Мёртвых ссылок и остатков заглушек в выдаче быть не должно.
+# Заглушка в конфиге — это то же самое, что пусто: у кого она уже записана
+# прошлыми версиями, установка иначе встанет ровно на проверке ниже.
+case "$SUPPORT_URL" in *YourBotName*) SUPPORT_URL="" ;; esac
+if [ -z "$SUPPORT_URL" ]; then
+  TOK=$(grep -hoE '^TG_BOT_TOKEN=.*' /etc/vpn-issue/config /etc/AVS/office.env 2>/dev/null \
+        | head -1 | cut -d= -f2-)
+  if [ -n "$TOK" ]; then
+    BOTNAME=$(curl -s -m 10 "https://api.telegram.org/bot$TOK/getMe" 2>/dev/null \
+      | python3 -c 'import json,sys
+try: print(json.load(sys.stdin)["result"]["username"])
+except Exception: print("")' 2>/dev/null)
+    [ -n "$BOTNAME" ] && SUPPORT_URL="https://t.me/$BOTNAME"
+  fi
+fi
+if [ -z "$SUPPORT_URL" ]; then
+  SUPPORT_URL="$PAGE_BASE/"
+  SUPPORT_NOTE=1
+fi
+
+[ "${SUPPORT_NOTE:-0}" = 1 ] && say "SUPPORT_URL не задан — ссылки «написать за помощью» ведут на саму страницу"
 
 for V in SECRET PAGE_BASE API_PATH SERVER_IP PAGE_PATH; do
   eval "v=\$$V"
