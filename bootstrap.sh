@@ -19,11 +19,31 @@ CFG=/etc/vpn-issue/config
 CERT_DIR=/root/cert/ip
 DRY=0
 NO_INSTALL=0
+MODE=""
+ASSUME_YES=0
 for A in "$@"; do
   case "$A" in
     --dry-run)    DRY=1 ;;
     --no-install) NO_INSTALL=1 ;;
-    *) printf 'использование: %s [--dry-run] [--no-install]\n' "$0" >&2; exit 2 ;;
+    --install)    MODE=install ;;
+    --uninstall)  MODE=uninstall ;;
+    --reinstall)  MODE=reinstall ;;
+    --yes|-y)     ASSUME_YES=1 ;;
+    *) cat >&2 <<USAGE
+использование: $0 [действие] [ключи]
+
+действия:
+  --install      поставить (по умолчанию)
+  --uninstall    удалить всё, что ставил этот набор
+  --reinstall    удалить и поставить заново
+
+ключи:
+  --dry-run      напечатать план, ничего не менять
+  --no-install   остановиться на основании, не ставить обвязку
+  --yes          не переспрашивать при удалении
+без действия и в интерактивном терминале показывается меню.
+USAGE
+       exit 2 ;;
   esac
 done
 
@@ -32,6 +52,160 @@ skip() { printf '  · %s\n' "$*"; }
 head_(){ printf '\n== %s ==\n' "$*"; }
 die()  { printf '\nОСТАНОВ: %s\n' "$*" >&2; exit 1; }
 run()  { if [ "$DRY" = 1 ]; then printf '  [сухой прогон] %s\n' "$*"; else eval "$@"; fi; }
+
+# retry <сколько> <что делаем> -- команда...
+# Сеть до GitHub из России рвётся регулярно, и одна неудачная попытка не повод
+# бросать установку. Между попытками ждём — мгновенный повтор упирается в то же.
+retry() {
+  local n=$1 what=$2; shift 2
+  local i=1
+  while :; do
+    if "$@"; then return 0; fi
+    [ "$i" -ge "$n" ] && { say "$what: не вышло за $n попыт(ки)"; return 1; }
+    say "$what: попытка $i не удалась, пробую ещё через $((i*5)) с"
+    sleep $((i*5)); i=$((i+1))
+  done
+}
+
+# Пошаговый разбор для тех, кто с пробросом портов дела не имел. Печатаем
+# настоящие числа этой машины, а не «ваш локальный адрес»: подставлять их
+# самому — ровно то место, где человек ошибается.
+port_guide() {
+  GW=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')
+  cat <<GUIDE
+
+  ── Что сделать на роутере (5 минут) ─────────────────────────────────────
+
+  1. Откройте в браузере адрес роутера: http://${GW:-192.168.1.1}
+     Логин и пароль обычно на наклейке снизу роутера.
+
+  2. Найдите раздел. У разных производителей он называется по-разному:
+       «Проброс портов», «Переадресация портов», «Port Forwarding»,
+       «Virtual Server», «NAT» → «Виртуальные серверы».
+
+  3. Заведите шесть правил. Внутренний адрес везде один и тот же —
+     $LOCAL_IP, внутренний и внешний порт совпадают:
+
+       443     TCP    основной вход
+       8443    TCP    второй вход
+       2053    TCP    страница с настройками для людей
+       80      TCP    нужен, чтобы выпустился настоящий сертификат
+       36712   UDP    Hysteria2
+       20000-50000  UDP   прыжки по портам (одним правилом-диапазоном)
+
+     Если диапазон 20000-50000 роутер завести не даёт — пропустите его,
+     Hysteria будет работать на одном порту 36712.
+
+  4. Сохраните и запустите установку ещё раз:  sudo $0
+
+     Скрипт сам увидит, что порты открылись, выпустит настоящий сертификат
+     вместо временного и доведёт остальное.
+
+  Порт панели ($PANEL_PORT) пробрасывать НЕ надо: она не рассчитана стоять
+  в открытом интернете, снаружи к ней ходят через SSH-туннель.
+  ─────────────────────────────────────────────────────────────────────────
+
+GUIDE
+}
+
+# --- удаление ---------------------------------------------------------------
+do_uninstall() {
+  head_ "удаление"
+  if [ "$ASSUME_YES" != 1 ] && [ "$DRY" != 1 ]; then
+    echo "  Будут остановлены и удалены: 3x-ui вместе с БАЗОЙ КЛИЕНТОВ И КЛЮЧАМИ"
+    echo "  Reality, Hysteria2, Shadowsocks, выдача подписок, сторож утечек,"
+    echo "  vpnwatch, страница, сертификаты и настройки в /etc/vpn-issue."
+    echo
+    echo "  Восстановить ключи Reality после этого НЕЛЬЗЯ: все выданные ссылки"
+    echo "  перестанут работать у всех людей разом."
+    echo
+    printf '  Напишите УДАЛИТЬ, чтобы продолжить: '
+    read -r ANSWER || ANSWER=""
+    [ "$ANSWER" = "УДАЛИТЬ" ] || { say "отменено"; return 1; }
+  fi
+
+  # Резервная копия ДО удаления: она стоит секунды, а без неё ошибка человека
+  # необратима. Кладём рядом с домашним каталогом root, а не в /tmp.
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] сделал бы резервную копию и снёс всё установленное"
+    return 0
+  fi
+  BK="/root/vpn-kit-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+  tar czf "$BK" 2>/dev/null \
+      /etc/x-ui /etc/vpn-issue /etc/xray-ss /etc/hysteria /root/cert \
+      /var/lib/vpn-issue /var/www/vpn-help || true
+  [ -s "$BK" ] && say "резервная копия: $BK"
+
+  for U in vpn-issue xray-ss hysteria-server hysteria-obfs hysteria-auth vpnwatch \
+           rules-mirror.timer leak-scan.timer xray-ss-sync.timer \
+           hysteria-links-sync.timer ru-allowlist.timer; do
+    systemctl disable --now "$U" >/dev/null 2>&1 || true
+  done
+  say "службы остановлены"
+
+  for F in /etc/systemd/system/vpn-issue.service /etc/systemd/system/xray-ss.service \
+           /etc/systemd/system/hysteria-obfs.service /etc/systemd/system/hysteria-auth.service \
+           /etc/systemd/system/vpnwatch.service \
+           /etc/systemd/system/rules-mirror.* /etc/systemd/system/leak-scan.* \
+           /etc/systemd/system/xray-ss-sync.* /etc/systemd/system/hysteria-links-sync.* \
+           /etc/systemd/system/ru-allowlist.*; do
+    rm -f $F 2>/dev/null || true
+  done
+  rm -rf /etc/systemd/system/hysteria-server.service.d 2>/dev/null || true
+  systemctl daemon-reload
+
+  # 3x-ui и Hysteria сносим их же установщиками, если они есть
+  [ -x /usr/local/x-ui/x-ui ] && { echo y | x-ui uninstall >/dev/null 2>&1 || true; }
+  rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria-server.service 2>/dev/null || true
+
+  rm -rf /opt/vpn-issue /etc/vpn-issue /etc/xray-ss /etc/hysteria /var/lib/vpn-issue 2>/dev/null || true
+  rm -f /usr/local/bin/vpnctl /usr/local/bin/vpnwatch 2>/dev/null || true
+  for F in hysteria-auth.py hysteria-links-sync.py client-links-sync.py leak-scan.py \
+           ru-allowlist.sh rules-mirror.sh xray-ss-apply.sh xray-ss-sync.py; do
+    rm -f "/usr/local/sbin/$F" 2>/dev/null || true
+  done
+  rm -f /etc/nginx/conf.d/vpn-help.conf 2>/dev/null || true
+  rm -rf /var/www/vpn-help /var/log/vpnwatch /var/lib/vpnwatch /etc/vpnwatch 2>/dev/null || true
+  systemctl reload nginx >/dev/null 2>&1 || true
+
+  # Правило прыжков по портам живёт в iptables и юнит его уже не снимет
+  IF=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
+  [ -n "$IF" ] && iptables -t nat -D PREROUTING -i "$IF" -p udp --dport 20000:50000 \
+      -j REDIRECT --to-ports 36712 2>/dev/null || true
+
+  say "удалено. Резервная копия ${BK:-не создана} — базу и ключи можно достать оттуда"
+  return 0
+}
+
+# --- меню -------------------------------------------------------------------
+if [ -z "$MODE" ]; then
+  if [ -t 0 ] && [ "$DRY" != 1 ]; then
+    echo
+    echo "  vpn-kit — что делаем?"
+    echo
+    echo "    1) Установить"
+    echo "    2) Удалить всё"
+    echo "    3) Переустановить (удалить и поставить заново)"
+    echo "    0) Выход"
+    echo
+    printf '  Введите номер [1]: '
+    read -r CH || CH=1
+    case "${CH:-1}" in
+      1|"") MODE=install ;;
+      2)    MODE=uninstall ;;
+      3)    MODE=reinstall ;;
+      0)    exit 0 ;;
+      *)    echo "  не понял, выхожу"; exit 2 ;;
+    esac
+  else
+    MODE=install
+  fi
+fi
+
+case "$MODE" in
+  uninstall) do_uninstall; exit $? ;;
+  reinstall) do_uninstall || exit 1 ;;
+esac
 
 # --- 1. проверки до любых действий ----------------------------------------
 head_ "проверка окружения"
@@ -330,8 +504,8 @@ if is_private "$LOCAL_IP"; then
     UP=$(upnpc -s 2>/dev/null)
     EXT=$(printf '%s' "$UP" | grep -oE 'ExternalIPAddress[ =]+[0-9.]+' | grep -oE '[0-9.]+$')
     if [ -z "$EXT" ]; then
-      say "роутер не отвечает по UPnP (или он выключен в его настройках)"
-      say "пробросьте вручную на $LOCAL_IP: TCP 80, 443, 8443, 2053 и UDP 36712"
+      say "роутер не отвечает по UPnP (или UPnP выключен в его настройках)"
+      port_guide
     elif [ "$EXT" != "$IP4" ]; then
       # Роутер видит снаружи не тот адрес, что весь интернет, — значит выше
       # стоит ещё один NAT провайдера. Пробрасывать бесполезно: до роутера
@@ -351,6 +525,7 @@ if is_private "$LOCAL_IP"; then
         fi
       done
       say "открыто портов: $OKN, не удалось: $BADN"
+      [ "$BADN" != 0 ] && port_guide
       # Диапазон прыжков — тридцать тысяч портов, по UPnP их не открыть.
       # Основной вход на 36712 работает и без них, прыжки просто не включатся.
       say "диапазон прыжков UDP 20000-50000 через UPnP не открыть — если он нужен,"
@@ -584,6 +759,32 @@ else
   fi
 fi
 
+# --- vpnwatch --------------------------------------------------------------
+# Отдельный монитор нарушений (github.com/dYGamma/screen-monitor-tui). Панель
+# vpnctl показывает его журнал, поэтому ставим здесь же, а не оставляем
+# человеку «доустановить самому».
+head_ "vpnwatch"
+if command -v vpnwatch >/dev/null; then
+  skip "уже стоит"
+elif [ "$DRY" = 1 ]; then
+  say "[сухой прогон] поставил бы vpnwatch из screen-monitor-tui"
+else
+  VWD=$(mktemp -d)
+  if retry 3 "загрузка vpnwatch" curl -fsSL --connect-timeout 15 --max-time 300 \
+       -o "$VWD/vw.tar.gz" https://codeload.github.com/dYGamma/screen-monitor-tui/tar.gz/refs/heads/main \
+     && tar xzf "$VWD/vw.tar.gz" -C "$VWD" 2>/dev/null; then
+    VWS=$(find "$VWD" -maxdepth 2 -name install.sh -printf '%h\n' 2>/dev/null | head -1)
+    if [ -n "$VWS" ] && (cd "$VWS" && bash install.sh -y >/dev/null 2>&1); then
+      systemctl is-active --quiet vpnwatch && say "vpnwatch запущен" || say "vpnwatch поставлен"
+    else
+      say "установщик vpnwatch не отработал — панель обойдётся без его журнала"
+    fi
+  else
+    say "vpnwatch скачать не вышло — панель обойдётся без его журнала"
+  fi
+  rm -rf "$VWD"
+fi
+
 # --- итог ------------------------------------------------------------------
 head_ "итог"
 for S in x-ui hysteria-server nginx; do
@@ -624,9 +825,19 @@ fi
 [ -n "$WARN" ] && printf '\n  ЗАМЕЧАНИЯ:%b\n' "$WARN"
 
 if [ -n "$MISS" ]; then
-  printf '\n  ОСНОВАНИЕ НЕПОЛНОЕ, не хватает:%b\n\n' "$MISS"
-  say "Допоставьте недостающее и запустите bootstrap.sh снова — он продолжит"
-  say "с этого места и уже сделанное не тронет. install.sh пока не запускайте."
+  printf '\n  НЕ ХВАТАЕТ:%b\n' "$MISS"
+  # Доводить должен скрипт, а не человек. Всё внутри идемпотентно, поэтому
+  # повторный заход трогает ровно недостающее. Три захода — потолок, дальше
+  # дело не в случайном обрыве, и молотить сеть бессмысленно.
+  PASS=$(( ${VPNKIT_PASS:-0} + 1 ))
+  if [ "$PASS" -lt 3 ] && [ "$DRY" = 0 ]; then
+    echo
+    say "пробую доставить недостающее (заход $PASS из 3)"
+    sleep 5
+    VPNKIT_PASS=$PASS exec "$0" --install ${NO_INSTALL:+--no-install}
+  fi
+  echo
+  say "автоматически доставить не вышло. Что делать — написано выше."
   exit 1
 fi
 
