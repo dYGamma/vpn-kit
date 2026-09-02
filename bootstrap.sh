@@ -169,11 +169,6 @@ if [ -x "$XUI_BIN" ] && [ ! -f /etc/vpn-issue/.panel-configured ]; then
     "$XUI_BIN" setting -port "$PANEL_PORT" -username "$PU" -password "$PP" >/dev/null 2>&1 \
       || say "флаги setting не приняты этой версией — задайте порт и учётку сами через «x-ui»"
     grep -q '^PANEL_USER=' "$CFG" || printf 'PANEL_USER=%s\nPANEL_PASS=%s\nPANEL_PORT=%s\n' "$PU" "$PP" "$PANEL_PORT" >> "$CFG"
-    # Установщик 3x-ui придумывает свой секретный путь панели и пишет его в
-    # install-result.env. Без этой строки человек знает порт и учётку, но не
-    # знает, по какому пути открывать панель, и ищет её в логах установки.
-    WBP=$(grep -oE '^WebBasePath=.*' /etc/x-ui/install-result.env 2>/dev/null | cut -d= -f2- | tr -d '"')
-    [ -n "$WBP" ] && ! grep -q '^PANEL_PATH=' "$CFG" && printf 'PANEL_PATH=%s\n' "$WBP" >> "$CFG"
     : > /etc/vpn-issue/.panel-configured
     systemctl restart x-ui >/dev/null 2>&1 || true
   fi
@@ -181,6 +176,20 @@ elif [ -f /etc/vpn-issue/.panel-configured ]; then
   skip "панель уже настроена"
 else
   skip "панели нет — порт и учётку задам после установки"
+fi
+
+# Секретный путь панели придумывает установщик 3x-ui и пишет в
+# install-result.env. Забираем его отдельным шагом, а не внутри первичной
+# настройки: иначе на повторном прогоне (когда настройка пропускается) путь
+# так и не попадёт в конфиг, и человек получит адрес панели без пути.
+if [ "$DRY" = 0 ] && [ -f "$CFG" ] && ! grep -q '^PANEL_PATH=' "$CFG"; then
+  WBP=$(grep -oE '^WebBasePath=.*' /etc/x-ui/install-result.env 2>/dev/null | cut -d= -f2- | tr -d '"')
+  [ -z "$WBP" ] && [ -f "$XUI_DB" ] && WBP=$(sqlite3 "$XUI_DB" \
+    "select value from settings where key='webBasePath';" 2>/dev/null | tr -d '/')
+  if [ -n "$WBP" ]; then
+    printf 'PANEL_PATH=%s\n' "$WBP" >> "$CFG"
+    say "секретный путь панели записан в $CFG"
+  fi
 fi
 
 # --- 5. два входа VLESS+Reality -------------------------------------------
