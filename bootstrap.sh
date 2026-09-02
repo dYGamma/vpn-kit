@@ -34,9 +34,43 @@ command -v apt-get >/dev/null || die "скрипт рассчитан на Debia
 
 IFACE=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
 [ -n "$IFACE" ] || die "не удалось определить внешний интерфейс (ip route show default пуст)"
-IP4=$(ip -4 addr show "$IFACE" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
-[ -n "$IP4" ] || die "не удалось определить адрес на интерфейсе $IFACE"
-say "интерфейс $IFACE, адрес $IP4"
+LOCAL_IP=$(ip -4 addr show "$IFACE" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+[ -n "$LOCAL_IP" ] || die "не удалось определить адрес на интерфейсе $IFACE"
+
+# Адрес интерфейса и адрес, по которому узел видно из интернета, — разные вещи.
+# На VPS они совпадают, а на домашней машине за NAT интерфейс отдаёт что-то
+# вроде 192.168.x.x. Взять его — значит собрать все ссылки, сертификат и
+# share_addr на адрес, который снаружи не существует, и обнаружить это уже на
+# клиенте, по таймауту без единой записи в логе.
+is_private() {
+  case "$1" in
+    10.*|127.*|192.168.*|169.254.*|100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+IP4="$LOCAL_IP"
+if is_private "$LOCAL_IP"; then
+  for U in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
+    PUB=$(curl -s -4 --max-time 8 "$U" 2>/dev/null | tr -d '[:space:]')
+    case "$PUB" in
+      [0-9]*.[0-9]*.[0-9]*.[0-9]*) is_private "$PUB" || { IP4="$PUB"; break; } ;;
+    esac
+    PUB=""
+  done
+  if [ "$IP4" = "$LOCAL_IP" ]; then
+    die "адрес интерфейса $LOCAL_IP частный, а внешний определить не вышло.
+       Задайте его руками: SERVER_IP=<ваш белый адрес> в $CFG и запустите снова."
+  fi
+  say "интерфейс $IFACE, локальный адрес $LOCAL_IP, внешний $IP4"
+  say ""
+  say "ВНИМАНИЕ: машина за NAT. Снаружи она доступна только через проброс портов"
+  say "на роутере — без него не заработает ни один вход и не выпустится сертификат:"
+  say "  TCP 443, TCP 8443, TCP 2053, TCP 80 (на время выпуска), UDP 36712 и 20000-50000"
+  say ""
+else
+  say "интерфейс $IFACE, адрес $IP4"
+fi
 
 # Порты, которые займём. Если что-то из этого уже слушает ЧУЖОЙ процесс —
 # лучше остановиться сейчас, чем получить наполовину поднятый узел.
@@ -97,6 +131,19 @@ get() { grep -oE "^$1=.*" "$CFG" 2>/dev/null | head -1 | cut -d= -f2-; }
 PAGE_PATH=$(basename "$(get PAGE_BASE | sed 's#/*$##')")
 [ -n "$PAGE_PATH" ] || PAGE_PATH=vpn
 
+# Адрес мог быть записан неверно на прошлом запуске (например, взялся адрес
+# интерфейса за NAT). Чиним при повторном прогоне: это наш собственный файл и
+# поле share_addr, ключей и клиентов правка не касается.
+OLD_IP=$(get SERVER_IP)
+if [ -n "$OLD_IP" ] && [ "$OLD_IP" != "$IP4" ]; then
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] заменил бы адрес $OLD_IP на $IP4 в $CFG и в ссылках панели"
+  else
+    sed -i -e "s#^SERVER_IP=.*#SERVER_IP=$IP4#" -e "s#$OLD_IP#$IP4#g" "$CFG"
+    say "адрес исправлен: было $OLD_IP, стало $IP4"
+  fi
+fi
+
 # --- 4. панель 3x-ui -------------------------------------------------------
 head_ "панель 3x-ui"
 XUI_BIN=/usr/local/x-ui/x-ui
@@ -122,6 +169,11 @@ if [ -x "$XUI_BIN" ] && [ ! -f /etc/vpn-issue/.panel-configured ]; then
     "$XUI_BIN" setting -port "$PANEL_PORT" -username "$PU" -password "$PP" >/dev/null 2>&1 \
       || say "флаги setting не приняты этой версией — задайте порт и учётку сами через «x-ui»"
     grep -q '^PANEL_USER=' "$CFG" || printf 'PANEL_USER=%s\nPANEL_PASS=%s\nPANEL_PORT=%s\n' "$PU" "$PP" "$PANEL_PORT" >> "$CFG"
+    # Установщик 3x-ui придумывает свой секретный путь панели и пишет его в
+    # install-result.env. Без этой строки человек знает порт и учётку, но не
+    # знает, по какому пути открывать панель, и ищет её в логах установки.
+    WBP=$(grep -oE '^WebBasePath=.*' /etc/x-ui/install-result.env 2>/dev/null | cut -d= -f2- | tr -d '"')
+    [ -n "$WBP" ] && ! grep -q '^PANEL_PATH=' "$CFG" && printf 'PANEL_PATH=%s\n' "$WBP" >> "$CFG"
     : > /etc/vpn-issue/.panel-configured
     systemctl restart x-ui >/dev/null 2>&1 || true
   fi
@@ -213,7 +265,7 @@ fi
 # если её открыть по старому/чужому имени, все скопированные ссылки поведут
 # не туда, а клиент отвалится по таймауту без единой записи в логе.
 if [ -f "$XUI_DB" ] && [ "$DRY" = 0 ]; then
-  sqlite3 "$XUI_DB" "update inbounds set share_addr_strategy='custom', share_addr='$IP4' where share_addr is null or share_addr='';" 2>/dev/null || true
+  sqlite3 "$XUI_DB" "update inbounds set share_addr_strategy='custom', share_addr='$IP4' where share_addr is null or share_addr<>'$IP4';" 2>/dev/null || true
 fi
 
 # --- 6. сертификат на IP ---------------------------------------------------
@@ -244,8 +296,44 @@ fi
 head_ "Hysteria2"
 if command -v hysteria >/dev/null; then
   skip "hysteria уже стоит ($(hysteria version 2>/dev/null | awk -F'\t' '/^Version/{print $2}'))"
+elif [ "$DRY" = 1 ]; then
+  say "[сухой прогон] поставил бы Hysteria2 официальным установщиком"
 else
-  run "bash <(curl -fsSL https://get.hy2.sh/)"
+  # Официальный установщик тянет бинарь с GitHub, а из России GitHub отвечает
+  # через раз — без таймаута скрипт просто висит молча. Поэтому: ограничение по
+  # времени, и если не вышло — качаем бинарь сами и пишем юнит руками.
+  say "ставлю Hysteria2 (до 5 минут, тянется с GitHub)"
+  timeout 300 bash -c 'curl -fsSL https://get.hy2.sh/ | bash' || say "официальный установщик не отработал"
+  if ! command -v hysteria >/dev/null; then
+    say "пробую запасной путь — прямая загрузка бинаря"
+    if timeout 300 curl -fsSL --retry 2 -o /usr/local/bin/hysteria \
+         https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64; then
+      chmod 755 /usr/local/bin/hysteria
+      id hysteria >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin hysteria
+      cat > /etc/systemd/system/hysteria-server.service <<'UNIT'
+[Unit]
+Description=Hysteria2 server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+      systemctl daemon-reload
+      say "бинарь и юнит поставлены вручную"
+    else
+      die "Hysteria2 поставить не удалось: GitHub недоступен.
+       Скачайте hysteria-linux-amd64 любым способом, положите в /usr/local/bin/hysteria,
+       сделайте chmod 755 и запустите bootstrap.sh снова — он продолжит с этого места."
+    fi
+  fi
 fi
 if [ -f /etc/hysteria/config.yaml ]; then
   skip "конфиг Hysteria уже есть — не переписываю"
@@ -338,6 +426,8 @@ for S in x-ui hysteria-server nginx; do
   printf '  %-18s %s\n' "$S" "${ST:-не установлена}"
 done
 echo
+PANEL_PATH=$(get PANEL_PATH); PANEL_PORT=$(get PANEL_PORT)
+[ -n "$PANEL_PORT" ] && say "панель: http://$IP4:$PANEL_PORT/${PANEL_PATH:-} (логин и пароль в $CFG)"
 say "основание готово. Дальше: ./install.sh — он поставит подписки,"
 say "выдачу доступов, Shadowsocks, обфускацию и сторож утечек."
 [ "$DRY" = 1 ] && say "(это был сухой прогон, на диск ничего не записано)"
