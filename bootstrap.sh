@@ -302,13 +302,28 @@ else
   # Официальный установщик тянет бинарь с GitHub, а из России GitHub отвечает
   # через раз — без таймаута скрипт просто висит молча. Поэтому: ограничение по
   # времени, и если не вышло — качаем бинарь сами и пишем юнит руками.
-  say "ставлю Hysteria2 (до 5 минут, тянется с GitHub)"
-  timeout 300 bash -c 'curl -fsSL https://get.hy2.sh/ | bash' || say "официальный установщик не отработал"
+  say "ставлю Hysteria2 (тянется с GitHub, из России это бывает долго)"
+  # Скачиваем в файл и ПРОВЕРЯЕМ, а не льём в bash по трубе. Обрыв на середине
+  # даёт половину скрипта, и bash её честно выполняет до места разрыва:
+  # `syntax error: unexpected end of file` и наполовину поставленная система.
+  # `bash -n` ловит обрыв надёжно — оборванный скрипт не разбирается.
+  HYSI=$(mktemp)
+  if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 300 \
+       -o "$HYSI" https://get.hy2.sh/ 2>/dev/null && [ -s "$HYSI" ] && bash -n "$HYSI" 2>/dev/null; then
+    bash "$HYSI" || say "установщик отработал с ошибкой"
+  else
+    say "установщик скачался не полностью — не запускаю его"
+  fi
+  rm -f "$HYSI"
   if ! command -v hysteria >/dev/null; then
     say "пробую запасной путь — прямая загрузка бинаря"
-    if timeout 300 curl -fsSL --retry 2 -o /usr/local/bin/hysteria \
-         https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64; then
-      chmod 755 /usr/local/bin/hysteria
+    HYSB=$(mktemp)
+    if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 300 -o "$HYSB" \
+         https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 \
+       && chmod 755 "$HYSB" && "$HYSB" version >/dev/null 2>&1; then
+      # version запускаем ДО установки: оборванная закачка даёт битый бинарь,
+      # который молча не стартует, а служба уходит в цикл перезапусков.
+      install -m 755 "$HYSB" /usr/local/bin/hysteria; rm -f "$HYSB"
       id hysteria >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin hysteria
       cat > /etc/systemd/system/hysteria-server.service <<'UNIT'
 [Unit]
@@ -329,9 +344,10 @@ UNIT
       systemctl daemon-reload
       say "бинарь и юнит поставлены вручную"
     else
-      die "Hysteria2 поставить не удалось: GitHub недоступен.
-       Скачайте hysteria-linux-amd64 любым способом, положите в /usr/local/bin/hysteria,
-       сделайте chmod 755 и запустите bootstrap.sh снова — он продолжит с этого места."
+      rm -f "$HYSB"
+      say "ВНИМАНИЕ: Hysteria2 поставить не удалось — GitHub недоступен."
+      say "Скачайте hysteria-linux-amd64 любым способом, положите в /usr/local/bin/hysteria,"
+      say "сделайте chmod 755 и запустите bootstrap.sh снова — он продолжит с этого места."
     fi
   fi
 fi
@@ -397,11 +413,37 @@ EOF
   say "прыжки по портам 20000-50000 → 36712 добавлены"
 fi
 
+# Запуск. Раньше этого не делал ни bootstrap, ни install: бинарь стоял, конфиг
+# лежал, юнит был — а служба не работала, и человек искал причину в клиенте.
+if [ "$DRY" = 1 ]; then
+  say "[сухой прогон] включил бы и запустил hysteria-server"
+elif command -v hysteria >/dev/null && [ -f /etc/hysteria/config.yaml ]; then
+  if [ ! -s "$CERT_DIR/fullchain.pem" ]; then
+    say "не запускаю: нет сертификата в $CERT_DIR, без него Hysteria не поднимется"
+  else
+    systemctl enable --now hysteria-server >/dev/null 2>&1
+    sleep 2
+    if systemctl is-active --quiet hysteria-server; then
+      say "hysteria-server запущен"
+    else
+      say "ВНИМАНИЕ: hysteria-server не поднялся — journalctl -u hysteria-server -n 30"
+    fi
+  fi
+else
+  say "не запускаю: нет бинаря или конфига"
+fi
+
 # --- 8. nginx --------------------------------------------------------------
 head_ "nginx"
 SITE=/etc/nginx/conf.d/vpn-help.conf
 if [ -f "$SITE" ] || grep -rqs "vpn-help" /etc/nginx/sites-enabled/ 2>/dev/null; then
   skip "конфиг страницы уже есть — не переписываю"
+elif [ "$DRY" = 0 ] && [ ! -s "$CERT_DIR/fullchain.pem" ]; then
+  # Раньше конфиг писался всегда, nginx его не принимал из-за отсутствующего
+  # сертификата, и человек получал «ВНИМАНИЕ: nginx не принял конфиг» без
+  # объяснения причины. Причина одна и та же, так и говорим.
+  say "пропускаю: нет сертификата в $CERT_DIR — nginx с таким конфигом не стартует"
+  say "положите сертификат и запустите bootstrap.sh снова"
 elif [ "$DRY" = 1 ]; then
   say "[сухой прогон] положил бы $SITE из etc/nginx-vpn-help.conf.example"
 else
@@ -426,8 +468,27 @@ for S in x-ui hysteria-server nginx; do
   printf '  %-18s %s\n' "$S" "${ST:-не установлена}"
 done
 echo
+
+# Чего не хватает. Раньше здесь безусловно печаталось «основание готово», даже
+# когда Hysteria не встала и nginx отверг конфиг: человек шёл ставить обвязку
+# поверх наполовину поднятого узла и ловил вторую волну ошибок.
+MISS=""
+command -v hysteria >/dev/null || MISS="$MISS\n  · Hysteria2 не установлена (GitHub был недоступен)"
+[ -s "$CERT_DIR/fullchain.pem" ] || MISS="$MISS\n  · нет сертификата в $CERT_DIR — без него не поднимутся ни Hysteria, ни страница"
+[ -f /etc/nginx/conf.d/vpn-help.conf ] || grep -rqs "vpn-help" /etc/nginx/sites-enabled/ 2>/dev/null \
+  || MISS="$MISS\n  · страница установки не отдаётся: конфиг nginx не положен"
+if is_private "$LOCAL_IP"; then
+  MISS="$MISS\n  · машина за NAT: без проброса портов на роутере снаружи ничего не откроется"
+fi
+
 PANEL_PATH=$(get PANEL_PATH); PANEL_PORT=$(get PANEL_PORT)
 [ -n "$PANEL_PORT" ] && say "панель: http://$IP4:$PANEL_PORT/${PANEL_PATH:-} (логин и пароль в $CFG)"
-say "основание готово. Дальше: ./install.sh — он поставит подписки,"
-say "выдачу доступов, Shadowsocks, обфускацию и сторож утечек."
+if [ -n "$MISS" ]; then
+  printf '\n  ОСНОВАНИЕ НЕПОЛНОЕ, не хватает:%b\n\n' "$MISS"
+  say "Допоставьте недостающее и запустите bootstrap.sh снова — он продолжит"
+  say "с этого места и уже сделанное не тронет. install.sh пока не запускайте."
+else
+  say "основание готово. Дальше: ./install.sh — он поставит подписки,"
+  say "выдачу доступов, Shadowsocks, обфускацию и сторож утечек."
+fi
 [ "$DRY" = 1 ] && say "(это был сухой прогон, на диск ничего не записано)"
