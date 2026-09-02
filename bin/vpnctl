@@ -33,14 +33,18 @@ VIOLATIONS = "/var/log/vpnwatch/violations.log"
 SS_KEYS = "/etc/xray-ss/keys.json"
 
 SERVICES = [
-    ("x-ui", "панель и Xray"),
-    ("xray-ss", "вход Shadowsocks"),
-    ("hysteria-server", "вход Hysteria2"),
-    ("hysteria-obfs", "Hysteria2 с обфускацией"),
-    ("hysteria-auth", "проверка паролей Hysteria"),
-    ("vpn-issue", "выдача подписок"),
-    ("nginx", "страница и подписки"),
-    ("vpnwatch", "сторож нарушений"),
+    ("x-ui", "панель и Xray", False),
+    ("xray-ss", "вход Shadowsocks", False),
+    ("hysteria-server", "вход Hysteria2", False),
+    ("hysteria-obfs", "Hysteria2 с обфускацией", False),
+    ("hysteria-auth", "проверка паролей Hysteria", False),
+    ("vpn-issue", "выдача подписок", False),
+    ("nginx", "страница и подписки", False),
+    # vpnwatch — не часть этого набора, а отдельный монитор
+    # (github.com/dYGamma/screen-monitor-tui). Если его нет, строку не
+    # показываем вовсе: вечное «inactive» у службы, которую никто не ставил,
+    # заставляет искать поломку там, где её нет.
+    ("vpnwatch", "сторож нарушений", True),
 ]
 TIMERS = [
     ("leak-scan.timer", "поиск утечек"),
@@ -95,8 +99,13 @@ def db_rows(sql, args=()):
 
 def collect_services():
     out = []
-    for name, what in SERVICES:
+    for name, what, optional in SERVICES:
         state = sh("systemctl", "is-active", name) or "нет"
+        if optional and state in ("", "нет", "inactive", "unknown"):
+            # Необязательную службу показываем, только если она реально стоит:
+            # проверяем не состояние, а наличие юнита.
+            if not sh("systemctl", "list-unit-files", name + ".service", "--no-legend"):
+                continue
         out.append((name, what, state))
     return out
 
@@ -471,6 +480,8 @@ class UI:
         y += 1
         self.put(y, 2, "Выдать: /vpn ok <номер>   Отказать: /vpn no <номер>   "
                        "Отозвать: /vpn off <tg_id>", curses.A_DIM); y += 2
+        if not os.path.exists(VIOLATIONS):
+            return y
         self.put(y, 2, "ПОСЛЕДНИЕ НАРУШЕНИЯ (vpnwatch)", curses.A_BOLD); y += 1
         for when, who, svc, dst, host in d["violations"]:
             self.put(y, 4, "%-19s %-12s %-22s %s"
