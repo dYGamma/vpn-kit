@@ -540,7 +540,13 @@ else
   install -d -m 755 "/var/www/vpn-help/$PAGE_PATH"
   [ -f "/var/www/vpn-help/$PAGE_PATH/index.html" ] || cp www/index.html "/var/www/vpn-help/$PAGE_PATH/index.html"
   if nginx -t >/dev/null 2>&1; then
-    systemctl reload nginx; say "страница будет на https://$IP4:2053/$PAGE_PATH/"
+    systemctl reload nginx
+    if is_private "$LOCAL_IP"; then
+      say "страница: https://$LOCAL_IP:2053/$PAGE_PATH/ — из домашней сети"
+      say "снаружи она откроется по https://$IP4:2053/$PAGE_PATH/, когда пробросите порт 2053"
+    else
+      say "страница будет на https://$IP4:2053/$PAGE_PATH/"
+    fi
   else
     rm -f "$SITE"; say "ВНИМАНИЕ: nginx не принял конфиг, файл убран. Проверьте nginx -t"
   fi
@@ -570,7 +576,19 @@ command -v hysteria >/dev/null || MISS="$MISS\n  · Hysteria2 не устано�
 is_private "$LOCAL_IP" && WARN="$WARN\n  · машина за NAT: снаружи ничего не откроется, пока на роутере не проброшены порты"
 
 PANEL_PATH=$(get PANEL_PATH); PANEL_PORT=$(get PANEL_PORT)
-[ -n "$PANEL_PORT" ] && say "панель: http://$IP4:$PANEL_PORT/${PANEL_PATH:-} (логин и пароль в $CFG)"
+if [ -n "$PANEL_PORT" ]; then
+  # За NAT печатаем ЛОКАЛЬНЫЙ адрес. По внешнему из своей же сети браузер
+  # упирается в роутер: разворачивать запрос обратно внутрь себя (hairpin NAT)
+  # большинство домашних роутеров не умеет, и человек получает
+  # ERR_CONNECTION_REFUSED на работающей панели.
+  if is_private "$LOCAL_IP"; then
+    say "панель: http://$LOCAL_IP:$PANEL_PORT/${PANEL_PATH:-} — открывать из домашней сети"
+    say "(снаружи она намеренно не выставлена: порт панели не пробрасываем)"
+  else
+    say "панель: http://$IP4:$PANEL_PORT/${PANEL_PATH:-}"
+  fi
+  say "логин и пароль в $CFG"
+fi
 [ -n "$WARN" ] && printf '\n  ЗАМЕЧАНИЯ:%b\n' "$WARN"
 
 if [ -n "$MISS" ]; then
