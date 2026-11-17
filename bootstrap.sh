@@ -345,6 +345,44 @@ else
   [ "$DRY" = 1 ] || [ -x "$XUI_BIN" ] || die "установщик 3x-ui отработал, а бинаря $XUI_BIN нет"
 fi
 
+# Установщик 3x-ui кладёт последний Xray, а он не всегда боевой: на 26.10.21
+# сервер Reality не принимает рукопожатия sing-box-клиентов (NekoBox, Hiddify,
+# Throne) ни на каком отпечатке, и заодно ломается Shadowsocks-2022 для них же.
+# Xray-клиенты при этом работают, так что с петли на самом сервере всё зелёное.
+# Проверено на живом трафике: на 26.3.27 работают и sing-box, и xray.
+# Пин снимается переменной PIN_XRAY="" (вернётся версия, которую ставит панель).
+PIN_XRAY="26.3.27"
+XRAY_BIN=/usr/local/x-ui/bin/xray-linux-amd64
+if [ "$DRY" = 1 ]; then
+  say "[сухой прогон] прибил бы Xray к версии $PIN_XRAY"
+elif [ -n "$PIN_XRAY" ] && [ -x "$XRAY_BIN" ]; then
+  CUR=$("$XRAY_BIN" version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  if [ "$CUR" = "$PIN_XRAY" ]; then
+    skip "Xray уже $PIN_XRAY — боевая версия"
+  else
+    say "Xray $CUR не боевой — ставлю $PIN_XRAY"
+    TMPZ=$(mktemp)
+    if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 240 \
+        -o "$TMPZ" "https://github.com/XTLS/Xray-core/releases/download/v$PIN_XRAY/Xray-linux-64.zip" \
+       && [ -s "$TMPZ" ]; then
+      TMPD=$(mktemp -d)
+      if (cd "$TMPD" && python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')" "$TMPZ" \
+          && [ -s xray ]); then
+        cp "$XRAY_BIN" "$XRAY_BIN.$CUR.bak"
+        install -m 755 "$TMPD/xray" "$XRAY_BIN"
+        systemctl restart x-ui >/dev/null 2>&1 || true
+        say "Xray $PIN_XRAY установлен (прежний сохранён в $XRAY_BIN.$CUR.bak)"
+      else
+        say "архив Xray не распаковался — оставляю $CUR (sing-box-клиенты не подключатся)"
+      fi
+      rm -rf "$TMPD"
+    else
+      say "Xray $PIN_XRAY не скачался (GitHub недоступен?) — оставляю $CUR (sing-box-клиенты не подключатся)"
+    fi
+    rm -f "$TMPZ"
+  fi
+fi
+
 PANEL_PORT=$(get PANEL_PORT); [ -n "$PANEL_PORT" ] || PANEL_PORT=13109
 if [ -x "$XUI_BIN" ] && [ ! -f /etc/vpn-issue/.panel-configured ]; then
   PU=$(get PANEL_USER); [ -n "$PU" ] || PU=admin
@@ -645,11 +683,15 @@ UNIT
     fi
   fi
 fi
-if [ -f /etc/hysteria/config.yaml ]; then
-  skip "конфиг Hysteria уже есть — не переписываю"
+if [ -f /etc/hysteria/config.yaml ] && grep -q '8790/auth' /etc/hysteria/config.yaml; then
+  skip "конфиг Hysteria уже наш — не переписываю"
 elif [ "$DRY" = 1 ]; then
   say "[сухой прогон] создал бы /etc/hysteria/config.yaml (порт 36712, авторизация по базе панели)"
 else
+  # Файл может быть шаблоном официального установщика (acme: your.domain.net):
+  # hysteria пробует валидировать такой домен через ACME, упирается в rate-limit
+  # и служба падает. Переписываем любой чужой конфиг на свой.
+  [ -f /etc/hysteria/config.yaml ] && say "конфиг Hysteria не наш (шаблон установщика?) — переписываю"
   install -d -m 700 /etc/hysteria
   cat > /etc/hysteria/config.yaml <<EOF
 listen: :36712
@@ -685,6 +727,28 @@ ignoreClientBandwidth: false
 EOF
   chmod 600 /etc/hysteria/config.yaml
   say "конфиг создан"
+fi
+
+# Официальный установщик запускает hysteria от User=hysteria, а конфиг (600)
+# и ключ сертификата (600 root, перевыпускается acme) ему не читаются — служба
+# падает с "permission denied". Службу проще запускать от root, как делает наш
+# собственный юнит, чем отдавать ключи в чужие руки.
+if [ -f /etc/systemd/system/hysteria-server.service ] && \
+   ! grep -qs '^User=root' /etc/systemd/system/hysteria-server.service.d/override.conf 2>/dev/null; then
+  if [ "$DRY" = 1 ]; then
+    say "[сухой прогон] добавил бы drop-in User=root для hysteria-server"
+  else
+    mkdir -p /etc/systemd/system/hysteria-server.service.d
+    cat > /etc/systemd/system/hysteria-server.service.d/override.conf <<'EOF'
+[Service]
+User=root
+EOF
+    systemctl daemon-reload
+    systemctl restart hysteria-server >/dev/null 2>&1 || true
+    say "hysteria-server переведён на root (drop-in override.conf)"
+  fi
+elif [ -f /etc/systemd/system/hysteria-server.service ]; then
+  skip "hysteria-server уже запускается от root"
 fi
 
 # Прыжки по портам. Диапазон 20000-50000 забирает ВЕСЬ UDP на этих портах и

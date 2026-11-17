@@ -26,9 +26,10 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 DB = "/etc/x-ui/x-ui.db"
 RULES_DIR = "/var/www/vpn-help/rules"
-# По своему же публичному адресу, а не по 127.0.0.1: сертификат выписан на IP,
-# и так проверка TLS проходит штатно. Соединение всё равно не покидает машину.
-XUI_SUB = "https://SERVER_IP:2096/sub/"
+# Подписки берём с локального порта панели (2096), на публичный адрес не ходим.
+# Схему и путь не хардкодим: путь секретный и лежит в настройках панели
+# (subPath, в старых установках был /sub/, теперь — случайный), а TLS на
+# подписке включается только когда задан subCertFile.
 RULES_BASE = "https://SERVER_IP:2053/rules"
 BASE_URL = "https://SERVER_IP:2053/PAGE_PATH"
 UPDATE_HOURS = 6
@@ -47,15 +48,21 @@ _CACHE_TTL = 60
 def _xui_links(sub_id):
     """Три ссылки подключения, как их отдаёт панель. Она — источник истины по
     ключам Reality и паролям, поэтому параметры не выводим заново, а читаем."""
-    req = urllib.request.Request(XUI_SUB + sub_id, headers={"User-Agent": "sub-builder"})
+    port = _setting("subPort", "2096") or "2096"
+    path = (_setting("subPath", "sub/") or "sub/").strip("/")
+    url = "%s://127.0.0.1:%s/%s/%s" % (
+        "https" if _setting("subCertFile") else "http", port, path, sub_id)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={"User-Agent": "sub-builder"})
     # Повторяем при срыве: разовая заминка резолвера или панели не должна
     # превращаться в 502. Приложение на ошибку может стереть профиль целиком,
     # и человек останется без доступа из-за мгновенного сбоя.
     last = None
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=10,
-                                        context=ssl.create_default_context()) as r:
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
                 raw = r.read()
             break
         except Exception as e:
