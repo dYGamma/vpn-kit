@@ -341,7 +341,7 @@ else
   say "ставлю 3x-ui официальным установщиком"
   # </dev/null: установщик в некоторых версиях спрашивает логин/пароль/порт.
   # Пустые ответы = он придумает случайные, а мы ниже зададим свои.
-  run "bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) </dev/null"
+  run "curl -fsSL https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh | bash"
   [ "$DRY" = 1 ] || [ -x "$XUI_BIN" ] || die "установщик 3x-ui отработал, а бинаря $XUI_BIN нет"
 fi
 
